@@ -242,13 +242,13 @@ class WeatherWidget(QWidget):
         hdr.addWidget(self._city_label)
         hdr.addStretch()
 
-        self._loc_btn = QPushButton("🔍")
-        self._loc_btn.setFixedSize(26, 26)
-        self._loc_btn.setToolTip("Search location")
+        self._loc_btn = QPushButton("Loc.")
+        self._loc_btn.setFixedSize(40, 26)
+        self._loc_btn.setToolTip("Search for a different location")
         self._loc_btn.clicked.connect(self._search_location)
         hdr.addWidget(self._loc_btn)
 
-        self._refresh_btn = QPushButton("⟳")
+        self._refresh_btn = QPushButton("↺")
         self._refresh_btn.setFixedSize(26, 26)
         self._refresh_btn.setToolTip("Refresh weather")
         self._refresh_btn.clicked.connect(self.refresh)
@@ -269,8 +269,9 @@ class WeatherWidget(QWidget):
         icon_inner.setContentsMargins(0, 0, 0, 0)
         self._icon_label = QLabel("—")
         self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._icon_label.setFont(QFont("Noto Color Emoji,Segoe UI Emoji", 32))
-        self._icon_label.setStyleSheet("background:transparent;")
+        # Use the application's default font (which has fontconfig emoji fallbacks)
+        # at a large point size — do NOT name a specific emoji font, Qt won't find it.
+        self._icon_label.setStyleSheet("font-size:28pt; background:transparent;")
         icon_inner.addWidget(self._icon_label)
         cur.addWidget(self._icon_frame)
 
@@ -387,7 +388,7 @@ class WeatherWidget(QWidget):
 
     def refresh(self):
         if not self._lat or not self._lon:
-            self._desc_label.setText("No location — click 🔍 to set one")
+            self._desc_label.setText("No location — click 'Loc.' to set one")
             return
         self._refresh_btn.setEnabled(False)
         self._desc_label.setText("Updating…")

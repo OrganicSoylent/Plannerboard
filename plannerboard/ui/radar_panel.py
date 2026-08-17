@@ -1,6 +1,8 @@
+import os
+import tempfile
+
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QUrl
-from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from plannerboard.ui import theme
 
@@ -25,7 +27,7 @@ RADAR_HTML = """<!DOCTYPE html>
   var map = L.map('map', {{ zoomControl: true }}).setView([LAT, LON], 9);
 
   L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-    attribution: '© OpenStreetMap contributors',
+    attribution: '&copy; OpenStreetMap contributors',
     maxZoom: 18
   }}).addTo(map);
 
@@ -42,12 +44,11 @@ RADAR_HTML = """<!DOCTYPE html>
     .bindPopup('You are here')
     .addTo(map);
 
-  // RainViewer radar overlay
   fetch('https://api.rainviewer.com/public/weather-maps.json')
     .then(function(r) {{ return r.json(); }})
     .then(function(api) {{
       var frames = api.radar.past;
-      if (frames.length === 0) return;
+      if (!frames || frames.length === 0) return;
       var latest = frames[frames.length - 1];
       var url = api.host + latest.path + '/512/{{z}}/{{x}}/{{y}}/2/1_1.png';
       L.tileLayer(url, {{
@@ -65,6 +66,7 @@ RADAR_HTML = """<!DOCTYPE html>
 
 COLLAPSED_H = 0
 EXPANDED_H = 360
+_TMP_HTML = os.path.join(tempfile.gettempdir(), "plannerboard_radar.html")
 
 
 class RadarPanel(QWidget):
@@ -73,20 +75,29 @@ class RadarPanel(QWidget):
         self._lat = lat
         self._lon = lon
         self._open = False
+        self._map_available = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 4, 0, 0)
         root.setSpacing(0)
 
         try:
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+            from PyQt6.QtWebEngineCore import QWebEngineSettings
+
             self._map = QWebEngineView()
+            # Allow the local temp file to fetch external tile/API URLs
+            self._map.page().settings().setAttribute(
+                QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
+                True,
+            )
             root.addWidget(self._map)
             self._map_available = True
         except Exception:
-            fallback = QLabel("Radar requires PyQt6-WebEngine")
-            fallback.setStyleSheet(f"color:{theme.SUBTEXT};padding:8px;")
+            fallback = QLabel("Radar requires PyQt6-WebEngine.\nInstall it with: pip install PyQt6-WebEngine")
+            fallback.setStyleSheet(f"color:{theme.SUBTEXT};padding:12px;")
+            fallback.setWordWrap(True)
             root.addWidget(fallback)
-            self._map_available = False
 
         self.setMaximumHeight(COLLAPSED_H)
 
@@ -115,10 +126,16 @@ class RadarPanel(QWidget):
 
     def _load_map(self):
         html = RADAR_HTML.format(
-            lat=self._lat, lon=self._lon,
-            bg=theme.BG, blue=theme.BLUE,
+            lat=self._lat,
+            lon=self._lon,
+            bg=theme.BG,
+            blue=theme.BLUE,
         )
-        self._map.setHtml(html, QUrl("https://localhost"))
+        # Write to a local file so the page can load external CDN/API resources
+        # (setHtml with a remote base URL blocks cross-origin tile fetches)
+        with open(_TMP_HTML, "w", encoding="utf-8") as f:
+            f.write(html)
+        self._map.load(QUrl.fromLocalFile(_TMP_HTML))
 
     @property
     def is_open(self):
