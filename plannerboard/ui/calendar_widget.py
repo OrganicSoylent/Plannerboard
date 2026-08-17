@@ -99,9 +99,8 @@ class CalendarWidget(QWidget):
         # Connect double-click signals → event dialog
         self._day_view.slot_double_clicked.connect(self._new_event_timed)
         self._week_view.slot_double_clicked.connect(self._new_event_timed)
-        self._month_view.date_double_clicked.connect(
-            lambda d: self._new_event_allday(d)
-        )
+        self._month_view.date_double_clicked.connect(self._new_event_allday)
+        self._month_view.event_double_clicked.connect(self._edit_event)
         self._year_view.month_double_clicked.connect(self._on_year_month_click)
 
         self._switch_view(VIEW_MONTH)
@@ -219,6 +218,15 @@ class CalendarWidget(QWidget):
         if dlg.exec():
             data = dlg.get_data()
             events_db.add_event(**data)
+            self._refresh()
+
+    def _edit_event(self, event: dict):
+        dlg = EventDialog(self, event=event)
+        if dlg.exec():
+            if dlg.deleted:
+                events_db.delete_event(event["id"])
+            else:
+                events_db.update_event(event["id"], **dlg.get_data())
             self._refresh()
 
     def reload(self):

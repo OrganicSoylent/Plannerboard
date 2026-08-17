@@ -1,23 +1,12 @@
-from datetime import date, time
+from datetime import date
+
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QTextEdit, QPushButton, QCheckBox, QDateEdit, QTimeEdit,
-    QComboBox, QDialogButtonBox, QWidget, QFrame,
+    QDialogButtonBox, QWidget, QFrame,
 )
-from PyQt6.QtCore import QDate, QTime, Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QDate, QTime
 from plannerboard.ui import theme
-
-
-class ColorSwatch(QFrame):
-    def __init__(self, color, parent=None):
-        super().__init__(parent)
-        self.color = color
-        self.setFixedSize(20, 20)
-        self.setStyleSheet(
-            f"background:{color};border-radius:4px;border:2px solid transparent;"
-        )
-        self.setToolTip(color)
 
 
 class EventDialog(QDialog):
@@ -25,34 +14,59 @@ class EventDialog(QDialog):
         super().__init__(parent)
         self._event = event
         self.setWindowTitle("Edit Event" if event else "New Event")
-        self.setMinimumWidth(380)
-        self._build(initial_date, event)
+        self.setMinimumWidth(400)
+        self._deleted = False
+        self._build(initial_date or date.today(), event)
 
     def _build(self, initial_date, event):
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
-        # Title
+        # ── Title ─────────────────────────────────────────────────────────
         layout.addWidget(QLabel("Title"))
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText("Event title…")
         layout.addWidget(self.title_edit)
 
-        # Date
-        layout.addWidget(QLabel("Date"))
+        # ── Start date ────────────────────────────────────────────────────
+        layout.addWidget(QLabel("Start date"))
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("dd.MM.yyyy")
-        d = initial_date or date.today()
-        self.date_edit.setDate(QDate(d.year, d.month, d.day))
+        self.date_edit.setDate(QDate(initial_date.year, initial_date.month, initial_date.day))
         layout.addWidget(self.date_edit)
 
-        # All-day toggle
+        # ── Multi-day toggle + end date ────────────────────────────────────
+        self.multiday_cb = QCheckBox("Multi-day event")
+        layout.addWidget(self.multiday_cb)
+
+        self._end_date_row = QWidget()
+        edr = QVBoxLayout(self._end_date_row)
+        edr.setContentsMargins(0, 0, 0, 0)
+        edr.addWidget(QLabel("End date"))
+        self.end_date_edit = QDateEdit()
+        self.end_date_edit.setCalendarPopup(True)
+        self.end_date_edit.setDisplayFormat("dd.MM.yyyy")
+        self.end_date_edit.setDate(self.date_edit.date())
+        edr.addWidget(self.end_date_edit)
+        self._end_date_row.setVisible(False)
+        layout.addWidget(self._end_date_row)
+
+        self.multiday_cb.toggled.connect(self._end_date_row.setVisible)
+        self.multiday_cb.toggled.connect(self._sync_end_date)
+        self.date_edit.dateChanged.connect(self._on_start_changed)
+
+        # ── All-day toggle ────────────────────────────────────────────────
+        div = QFrame()
+        div.setFrameShape(QFrame.Shape.HLine)
+        div.setStyleSheet(f"color:{theme.BORDER};")
+        layout.addWidget(div)
+
         self.all_day_cb = QCheckBox("All-day event")
         self.all_day_cb.setChecked(True)
         layout.addWidget(self.all_day_cb)
 
-        # Time row
+        # ── Time row ──────────────────────────────────────────────────────
         self.time_row = QWidget()
         tr = QHBoxLayout(self.time_row)
         tr.setContentsMargins(0, 0, 0, 0)
@@ -67,21 +81,17 @@ class EventDialog(QDialog):
         self.end_time.setTime(QTime(10, 0))
         tr.addWidget(self.end_time)
         layout.addWidget(self.time_row)
-
         self.all_day_cb.toggled.connect(self.time_row.setHidden)
         self.time_row.setHidden(True)
 
-        # Color picker
+        # ── Color picker ──────────────────────────────────────────────────
         layout.addWidget(QLabel("Color"))
         color_row = QHBoxLayout()
-        self._color_btns = []
+        self._color_btns: list[tuple[QPushButton, str]] = []
         self._selected_color = theme.BLUE
         for c in theme.EVENT_COLORS:
             btn = QPushButton()
             btn.setFixedSize(24, 24)
-            btn.setStyleSheet(
-                f"background:{c};border-radius:4px;border:2px solid transparent;"
-            )
             btn.clicked.connect(lambda _, col=c: self._pick_color(col))
             self._color_btns.append((btn, c))
             color_row.addWidget(btn)
@@ -89,14 +99,14 @@ class EventDialog(QDialog):
         layout.addLayout(color_row)
         self._pick_color(theme.BLUE)
 
-        # Notes
+        # ── Notes ─────────────────────────────────────────────────────────
         layout.addWidget(QLabel("Notes"))
         self.notes_edit = QTextEdit()
         self.notes_edit.setPlaceholderText("Optional notes…")
-        self.notes_edit.setMaximumHeight(80)
+        self.notes_edit.setFixedHeight(70)
         layout.addWidget(self.notes_edit)
 
-        # Buttons
+        # ── Buttons ───────────────────────────────────────────────────────
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -107,23 +117,39 @@ class EventDialog(QDialog):
             del_btn.clicked.connect(self._delete)
         layout.addWidget(btns)
 
-        # Populate if editing
+        # ── Populate when editing ─────────────────────────────────────────
         if event:
             self.title_edit.setText(event.get("title", ""))
-            ed = date.fromisoformat(event["date"])
-            self.date_edit.setDate(QDate(ed.year, ed.month, ed.day))
+            sd = date.fromisoformat(event["date"])
+            self.date_edit.setDate(QDate(sd.year, sd.month, sd.day))
+
+            if event.get("end_date") and event["end_date"] != event["date"]:
+                ed = date.fromisoformat(event["end_date"])
+                self.end_date_edit.setDate(QDate(ed.year, ed.month, ed.day))
+                self.multiday_cb.setChecked(True)
+
             all_day = bool(event.get("all_day", True))
             self.all_day_cb.setChecked(all_day)
             if event.get("time"):
-                t = [int(x) for x in event["time"].split(":")]
-                self.start_time.setTime(QTime(t[0], t[1]))
+                h, m = (int(x) for x in event["time"].split(":"))
+                self.start_time.setTime(QTime(h, m))
             if event.get("end_time"):
-                t = [int(x) for x in event["end_time"].split(":")]
-                self.end_time.setTime(QTime(t[0], t[1]))
+                h, m = (int(x) for x in event["end_time"].split(":"))
+                self.end_time.setTime(QTime(h, m))
             self.notes_edit.setPlainText(event.get("notes") or "")
             self._pick_color(event.get("color", theme.BLUE))
 
-        self._deleted = False
+    # ── internal helpers ──────────────────────────────────────────────────
+
+    def _sync_end_date(self, checked):
+        if checked:
+            self.end_date_edit.setDate(self.date_edit.date())
+
+    def _on_start_changed(self, qd):
+        if not self.multiday_cb.isChecked():
+            self.end_date_edit.setDate(qd)
+        elif self.end_date_edit.date() < qd:
+            self.end_date_edit.setDate(qd)
 
     def _pick_color(self, color):
         self._selected_color = color
@@ -135,6 +161,7 @@ class EventDialog(QDialog):
 
     def _accept(self):
         if not self.title_edit.text().strip():
+            self.title_edit.setPlaceholderText("⚠ Title required")
             return
         self.accept()
 
@@ -142,19 +169,28 @@ class EventDialog(QDialog):
         self._deleted = True
         self.accept()
 
+    # ── public ───────────────────────────────────────────────────────────
+
+    @property
+    def deleted(self):
+        return self._deleted
+
     def get_data(self):
-        qd = self.date_edit.date()
+        qsd = self.date_edit.date()
         all_day = self.all_day_cb.isChecked()
+
+        end_date = None
+        if self.multiday_cb.isChecked():
+            qed = self.end_date_edit.date()
+            end_date = date(qed.year(), qed.month(), qed.day()).isoformat()
+
         return {
             "title": self.title_edit.text().strip(),
-            "date": date(qd.year(), qd.month(), qd.day()).isoformat(),
+            "date": date(qsd.year(), qsd.month(), qsd.day()).isoformat(),
+            "end_date": end_date,
             "time": None if all_day else self.start_time.time().toString("HH:mm"),
             "end_time": None if all_day else self.end_time.time().toString("HH:mm"),
             "all_day": all_day,
             "notes": self.notes_edit.toPlainText().strip() or None,
             "color": self._selected_color,
         }
-
-    @property
-    def deleted(self):
-        return self._deleted
