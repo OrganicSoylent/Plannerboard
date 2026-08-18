@@ -23,9 +23,9 @@ except Exception as _e:
 # ── Local Leaflet resource paths ───────────────────────────────────────────
 _RES_DIR = DATA_DIR / "resources" / "leaflet"
 _LEAFLET_CSS = _RES_DIR / "leaflet.min.css"
-_LEAFLET_JS = _RES_DIR / "leaflet.min.js"
+_LEAFLET_JS = _RES_DIR / "leaflet.js"
 _LEAFLET_CSS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-_LEAFLET_JS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.min.js"
+_LEAFLET_JS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
 
 _TMP_HTML = Path(tempfile.gettempdir()) / "plannerboard_radar.html"
 
