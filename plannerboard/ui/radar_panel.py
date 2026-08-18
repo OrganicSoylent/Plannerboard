@@ -13,7 +13,14 @@ try:
     from PyQt6.QtWebEngineCore import (
         QWebEngineSettings as _QWebEngineSettings,
         QWebEngineProfile as _QWebEngineProfile,
+        QWebEnginePage as _QWebEnginePage,
     )
+
+    class _DebugPage(_QWebEnginePage):
+        """Forwards JS console messages to the terminal."""
+        def javaScriptConsoleMessage(self, level, msg, line, source):
+            print(f"[Radar JS] line {line}: {msg}")
+
     _WE_AVAILABLE = True
 except Exception as _e:
     _WE_AVAILABLE = False
@@ -165,16 +172,12 @@ class RadarPanel(QWidget):
                     pass
 
                 self._map = _QWebEngineView()
+                self._map.setPage(_DebugPage(self._map))
                 self._map.setSizePolicy(
                     QSizePolicy.Policy.Expanding,
                     QSizePolicy.Policy.Expanding,
                 )
                 self._map.loadFinished.connect(self._on_load_finished)
-                # Forward JS console messages so errors appear in the terminal.
-                self._map.page().javaScriptConsoleMessage.connect(
-                    lambda _lvl, msg, line, _src:
-                        print(f"[Radar JS] line {line}: {msg}")
-                )
 
                 # Belt-and-suspenders: per-page settings too.
                 try:
