@@ -1,7 +1,6 @@
-import tempfile
 from pathlib import Path
 
-from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QUrl, QThread, pyqtSignal
+from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QThread, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy
 
 from plannerboard.config import DATA_DIR
@@ -20,14 +19,12 @@ except Exception as _e:
     _WE_AVAILABLE = False
     _WE_ERROR = str(_e)
 
-# ── Local Leaflet resource paths ───────────────────────────────────────────
+# ── Local Leaflet cache ────────────────────────────────────────────────────
 _RES_DIR = DATA_DIR / "resources" / "leaflet"
-_LEAFLET_CSS = _RES_DIR / "leaflet.min.css"
+_LEAFLET_CSS = _RES_DIR / "leaflet.css"
 _LEAFLET_JS = _RES_DIR / "leaflet.js"
 _LEAFLET_CSS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
 _LEAFLET_JS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-
-_TMP_HTML = Path(tempfile.gettempdir()) / "plannerboard_radar.html"
 
 COLLAPSED_H = 0
 EXPANDED_H = 380
@@ -37,25 +34,35 @@ def _leaflet_ready() -> bool:
     return _LEAFLET_CSS.exists() and _LEAFLET_JS.exists()
 
 
-# Radar map HTML. Uses string .replace() markers (not .format()) so that the
-# Leaflet JS source (full of { }) isn't misread as format placeholders.
-# The actual substitutions happen in _build_html() below.
+# ── HTML template ──────────────────────────────────────────────────────────
+# Uses __MARKERS__ for substitution so { } inside Leaflet source are safe.
+# Leaflet CSS and JS are inlined so there are zero external script deps.
+# Tile images (OSM) load via <img> elements which are CORS-safe everywhere.
 _RADAR_HTML_TEMPLATE = """\
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+<style>__LEAFLET_CSS__</style>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { width:100%; height:100%; background:__BG__; }
   #map { width:100%; height:100%; }
 </style>
-<link rel="stylesheet" href="__LEAFLET_CSS__">
-<script src="__LEAFLET_JS__"></script>
+<script>__LEAFLET_JS__</script>
 </head>
 <body>
 <div id="map"></div>
 <script>
+  // When CSS is inlined Leaflet can't auto-detect icon image paths;
+  // point it at the CDN images explicitly (loaded as <img>, CORS-safe).
+  delete L.Icon.Default.prototype._getIconUrl;
+  L.Icon.Default.mergeOptions({
+    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  });
+
   var map = L.map('map', {zoomControl: true}).setView([__LAT__, __LON__], 9);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -81,12 +88,8 @@ _RADAR_HTML_TEMPLATE = """\
       if (!frames || frames.length === 0) return;
       var latest = frames[frames.length - 1];
       var url = api.host + latest.path + '/512/{z}/{x}/{y}/2/1_1.png';
-      L.tileLayer(url, {
-        tileSize: 512,
-        opacity: 0.55,
-        zIndex: 2,
-        attribution: 'RainViewer'
-      }).addTo(map);
+      L.tileLayer(url, {tileSize: 512, opacity: 0.55, zIndex: 2,
+                        attribution: 'RainViewer'}).addTo(map);
     })
     .catch(function() {});
 </script>
@@ -95,24 +98,24 @@ _RADAR_HTML_TEMPLATE = """\
 """
 
 
-def _build_html(lat, lon):
-    css_qurl = QUrl.fromLocalFile(str(_LEAFLET_CSS)).toString()
-    js_qurl = QUrl.fromLocalFile(str(_LEAFLET_JS)).toString()
+def _build_html(lat: float, lon: float) -> str:
+    css = _LEAFLET_CSS.read_text(encoding="utf-8")
+    js = _LEAFLET_JS.read_text(encoding="utf-8")
     return (
         _RADAR_HTML_TEMPLATE
+        .replace("__LEAFLET_CSS__", css)
+        .replace("__LEAFLET_JS__", js)
         .replace("__LAT__", str(lat))
         .replace("__LON__", str(lon))
         .replace("__BG__", theme.BG)
         .replace("__BLUE__", theme.BLUE)
-        .replace("__LEAFLET_CSS__", css_qurl)
-        .replace("__LEAFLET_JS__", js_qurl)
     )
 
 
 # ── Background downloader ──────────────────────────────────────────────────
 
 class _LeafletDownloader(QThread):
-    done = pyqtSignal(bool, str)  # ok, error_msg
+    done = pyqtSignal(bool, str)
 
     def run(self):
         try:
@@ -134,7 +137,7 @@ class _LeafletDownloader(QThread):
 # ── Main widget ────────────────────────────────────────────────────────────
 
 class RadarPanel(QWidget):
-    def __init__(self, lat=51.5, lon=7.0, parent=None):
+    def __init__(self, lat: float = 51.5, lon: float = 7.0, parent=None):
         super().__init__(parent)
         self._lat = lat
         self._lon = lon
@@ -149,18 +152,15 @@ class RadarPanel(QWidget):
 
         if _WE_AVAILABLE:
             try:
-                # Apply remote-URL access to the default profile so every page
-                # (including the file:// radar page) can reach tile servers.
+                # Apply to the default profile so every page in this process
+                # can reach remote tile servers.
                 try:
                     prof = _QWebEngineProfile.defaultProfile()
-                    prof.settings().setAttribute(
+                    for attr in (
                         _QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
-                        True,
-                    )
-                    prof.settings().setAttribute(
                         _QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls,
-                        True,
-                    )
+                    ):
+                        prof.settings().setAttribute(attr, True)
                 except Exception:
                     pass
 
@@ -170,18 +170,20 @@ class RadarPanel(QWidget):
                     QSizePolicy.Policy.Expanding,
                 )
                 self._map.loadFinished.connect(self._on_load_finished)
+                # Forward JS console messages so errors appear in the terminal.
+                self._map.page().javaScriptConsoleMessage.connect(
+                    lambda _lvl, msg, line, _src:
+                        print(f"[Radar JS] line {line}: {msg}")
+                )
 
-                # Belt-and-suspenders: also set per-page
+                # Belt-and-suspenders: per-page settings too.
                 try:
                     s = self._map.page().settings()
-                    s.setAttribute(
+                    for attr in (
                         _QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
-                        True,
-                    )
-                    s.setAttribute(
                         _QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls,
-                        True,
-                    )
+                    ):
+                        s.setAttribute(attr, True)
                 except Exception:
                     pass
 
@@ -197,11 +199,9 @@ class RadarPanel(QWidget):
             )
 
         self.setMaximumHeight(COLLAPSED_H)
-
         self._anim = QPropertyAnimation(self, b"maximumHeight")
         self._anim.setDuration(300)
         self._anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
-        # Load only after animation ends so the view has a real non-zero size.
         self._anim.finished.connect(self._on_anim_finished)
 
     # ── helpers ────────────────────────────────────────────────────────────
@@ -223,7 +223,7 @@ class RadarPanel(QWidget):
     # ── signal handlers ────────────────────────────────────────────────────
 
     def _on_load_finished(self, ok: bool):
-        print(f"[Radar] load finished: ok={ok}  url={self._map.url().toString()}")
+        print(f"[Radar] load finished: ok={ok}  url={self._map.url().toString()[:80]}")
 
     def _on_anim_finished(self):
         if self._open and self._map_available and not self._map_loaded:
@@ -244,13 +244,14 @@ class RadarPanel(QWidget):
             self._do_load()
         else:
             self._map.setHtml(
-                self._status_html(f"<span style='color:#f38ba8;'>Download failed: {err}</span>")
+                self._status_html(
+                    f"<span style='color:#f38ba8;'>Download failed: {err}</span>"
+                )
             )
 
     def _do_load(self):
-        html = _build_html(self._lat, self._lon)
-        _TMP_HTML.write_text(html, encoding="utf-8")
-        self._map.load(QUrl.fromLocalFile(str(_TMP_HTML)))
+        print(f"[Radar] loading map  lat={self._lat}  lon={self._lon}")
+        self._map.setHtml(_build_html(self._lat, self._lon))
         self._map_loaded = True
 
     # ── public API ─────────────────────────────────────────────────────────
