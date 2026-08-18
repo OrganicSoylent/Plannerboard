@@ -243,13 +243,13 @@ class WeatherWidget(QWidget):
         hdr.addStretch()
 
         self._loc_btn = QPushButton("Loc.")
-        self._loc_btn.setFixedSize(40, 26)
-        self._loc_btn.setToolTip("Search for a different location")
+        self._loc_btn.setFixedSize(60, 26)
+        self._loc_btn.setToolTip("Set a different location")
         self._loc_btn.clicked.connect(self._search_location)
         hdr.addWidget(self._loc_btn)
 
         self._refresh_btn = QPushButton("↺")
-        self._refresh_btn.setFixedSize(26, 26)
+        self._refresh_btn.setFixedSize(40, 26)
         self._refresh_btn.setToolTip("Refresh weather")
         self._refresh_btn.clicked.connect(self.refresh)
         hdr.addWidget(self._refresh_btn)
