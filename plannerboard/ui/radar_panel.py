@@ -1,8 +1,7 @@
 import os
-import sys
 import tempfile
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy
 from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QUrl
 
 from plannerboard.ui import theme
@@ -25,8 +24,8 @@ RADAR_HTML = """<!DOCTYPE html>
 <meta charset="utf-8">
 <style>
   * {{ margin:0; padding:0; box-sizing:border-box; }}
-  body {{ background:{bg}; }}
-  #map {{ width:100%; height:100vh; }}
+  html, body {{ width:100%; height:100%; background:{bg}; }}
+  #map {{ width:100%; height:100%; }}
 </style>
 <link rel="stylesheet"
   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -78,7 +77,7 @@ RADAR_HTML = """<!DOCTYPE html>
 """
 
 COLLAPSED_H = 0
-EXPANDED_H = 360
+EXPANDED_H = 380
 _TMP_HTML = os.path.join(tempfile.gettempdir(), "plannerboard_radar.html")
 
 
@@ -89,62 +88,80 @@ class RadarPanel(QWidget):
         self._lon = lon
         self._open = False
         self._map_available = False
+        self._map_loaded = False  # track whether we've issued the first load
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 4, 0, 0)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         if _WE_AVAILABLE:
             try:
                 self._map = _QWebEngineView()
-
-                # Allow local temp file to load external CDN / tile URLs
+                # Expanding policy so the layout fills the view at full height
+                self._map.setSizePolicy(
+                    QSizePolicy.Policy.Expanding,
+                    QSizePolicy.Policy.Expanding,
+                )
+                # Allow local temp file to reach external CDN / tile URLs
                 try:
                     self._map.page().settings().setAttribute(
                         _QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
                         True,
                     )
                 except Exception:
-                    pass  # setting may not exist in all PyQt6-WebEngine versions
+                    pass  # attribute name may differ across minor versions
 
                 root.addWidget(self._map)
                 self._map_available = True
             except Exception as e:
-                self._show_fallback(root, f"WebEngine init error:\n{e}\n\n"
-                                   "Try running:\n"
-                                   "  QTWEBENGINE_DISABLE_SANDBOX=1 python run.py")
+                self._show_fallback(
+                    root,
+                    f"WebEngine initialisation error:\n{e}\n\n"
+                    "Try:\n  QTWEBENGINE_DISABLE_SANDBOX=1 python run.py",
+                )
         else:
-            self._show_fallback(root, f"PyQt6-WebEngine import failed:\n{_WE_ERROR}\n\n"
-                               "Install with:\n"
-                               "  pip install PyQt6-WebEngine")
+            self._show_fallback(
+                root,
+                f"PyQt6-WebEngine import failed:\n{_WE_ERROR}\n\n"
+                "Install with:\n  pip install PyQt6-WebEngine",
+            )
 
         self.setMaximumHeight(COLLAPSED_H)
 
         self._anim = QPropertyAnimation(self, b"maximumHeight")
-        self._anim.setDuration(280)
+        self._anim.setDuration(300)
         self._anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        # Load the HTML only once the animation is done and the view has real dimensions
+        self._anim.finished.connect(self._on_anim_finished)
+
+    # ── helpers ────────────────────────────────────────────────────────────
 
     def _show_fallback(self, layout, msg):
         lbl = QLabel(msg)
-        lbl.setStyleSheet(
-            f"color:{theme.SUBTEXT};padding:12px;font-size:9pt;"
-        )
+        lbl.setStyleSheet(f"color:{theme.SUBTEXT};padding:12px;font-size:9pt;")
         lbl.setWordWrap(True)
         layout.addWidget(lbl)
+
+    def _on_anim_finished(self):
+        if self._open and self._map_available and not self._map_loaded:
+            self._load_map()
+            self._map_loaded = True
+
+    # ── public API ─────────────────────────────────────────────────────────
 
     def set_location(self, lat, lon):
         self._lat = lat
         self._lon = lon
+        self._map_loaded = False  # force reload next time the panel opens
         if self._open and self._map_available:
             self._load_map()
+            self._map_loaded = True
 
     def toggle(self):
         if self._open:
             self._anim.setStartValue(self.maximumHeight())
             self._anim.setEndValue(COLLAPSED_H)
         else:
-            if self._map_available:
-                self._load_map()
             self._anim.setStartValue(COLLAPSED_H)
             self._anim.setEndValue(EXPANDED_H)
         self._open = not self._open
