@@ -1,7 +1,11 @@
+import os
 import sys
 
+# Qt WebEngine's Chromium sandbox frequently fails on Linux (Wayland, containers,
+# certain kernel security policies). This must be set before any PyQt6 import.
+os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
 
 from plannerboard.config import Config
 from plannerboard.data.events_db import init_db

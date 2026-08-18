@@ -1,10 +1,23 @@
 import os
+import sys
 import tempfile
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QUrl
 
 from plannerboard.ui import theme
+
+# ── WebEngine availability check (done once at import time) ────────────────
+_WE_ERROR = ""
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView as _QWebEngineView
+    from PyQt6.QtWebEngineCore import QWebEngineSettings as _QWebEngineSettings
+    _WE_AVAILABLE = True
+except Exception as _e:
+    _WE_AVAILABLE = False
+    _WE_ERROR = str(_e)
+
+# ── Radar HTML template ────────────────────────────────────────────────────
 
 RADAR_HTML = """<!DOCTYPE html>
 <html>
@@ -81,29 +94,43 @@ class RadarPanel(QWidget):
         root.setContentsMargins(0, 4, 0, 0)
         root.setSpacing(0)
 
-        try:
-            from PyQt6.QtWebEngineWidgets import QWebEngineView
-            from PyQt6.QtWebEngineCore import QWebEngineSettings
+        if _WE_AVAILABLE:
+            try:
+                self._map = _QWebEngineView()
 
-            self._map = QWebEngineView()
-            # Allow the local temp file to fetch external tile/API URLs
-            self._map.page().settings().setAttribute(
-                QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
-                True,
-            )
-            root.addWidget(self._map)
-            self._map_available = True
-        except Exception:
-            fallback = QLabel("Radar requires PyQt6-WebEngine.\nInstall it with: pip install PyQt6-WebEngine")
-            fallback.setStyleSheet(f"color:{theme.SUBTEXT};padding:12px;")
-            fallback.setWordWrap(True)
-            root.addWidget(fallback)
+                # Allow local temp file to load external CDN / tile URLs
+                try:
+                    self._map.page().settings().setAttribute(
+                        _QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
+                        True,
+                    )
+                except Exception:
+                    pass  # setting may not exist in all PyQt6-WebEngine versions
+
+                root.addWidget(self._map)
+                self._map_available = True
+            except Exception as e:
+                self._show_fallback(root, f"WebEngine init error:\n{e}\n\n"
+                                   "Try running:\n"
+                                   "  QTWEBENGINE_DISABLE_SANDBOX=1 python run.py")
+        else:
+            self._show_fallback(root, f"PyQt6-WebEngine import failed:\n{_WE_ERROR}\n\n"
+                               "Install with:\n"
+                               "  pip install PyQt6-WebEngine")
 
         self.setMaximumHeight(COLLAPSED_H)
 
         self._anim = QPropertyAnimation(self, b"maximumHeight")
         self._anim.setDuration(280)
         self._anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+    def _show_fallback(self, layout, msg):
+        lbl = QLabel(msg)
+        lbl.setStyleSheet(
+            f"color:{theme.SUBTEXT};padding:12px;font-size:9pt;"
+        )
+        lbl.setWordWrap(True)
+        layout.addWidget(lbl)
 
     def set_location(self, lat, lon):
         self._lat = lat
@@ -131,8 +158,6 @@ class RadarPanel(QWidget):
             bg=theme.BG,
             blue=theme.BLUE,
         )
-        # Write to a local file so the page can load external CDN/API resources
-        # (setHtml with a remote base URL blocks cross-origin tile fetches)
         with open(_TMP_HTML, "w", encoding="utf-8") as f:
             f.write(html)
         self._map.load(QUrl.fromLocalFile(_TMP_HTML))
