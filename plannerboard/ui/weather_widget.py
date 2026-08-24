@@ -429,7 +429,7 @@ class WeatherWidget(QWidget):
         dp_hdr.addWidget(self._detail_label)
         dp_hdr.addStretch()
         close_btn = QPushButton("×")
-        close_btn.setFixedSize(22, 22)
+        close_btn.setFixedSize(44, 44)
         close_btn.setStyleSheet(
             f"background:transparent;color:{theme.SUBTEXT};border:none;font-size:13pt;"
         )
