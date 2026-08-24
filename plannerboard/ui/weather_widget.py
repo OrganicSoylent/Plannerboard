@@ -494,6 +494,11 @@ class WeatherWidget(QWidget):
         self.refresh()
 
     def refresh(self):
+        # Re-read unit settings so a change in Settings takes effect immediately.
+        self._unit = self._config.get("temperature_unit", "celsius")
+        self._wind_unit = self._config.get("wind_speed_unit", "kmh")
+        self._unit_sym = "C" if self._unit == "celsius" else "F"
+
         if not self._lat or not self._lon:
             self._desc_label.setText("No location — click 'Loc.' to set one")
             return
