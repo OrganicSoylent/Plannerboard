@@ -19,6 +19,8 @@ from plannerboard.ui import theme
 
 REFRESH_MS = 30 * 60 * 1000  # 30 minutes
 
+_WIND_DISPLAY = {"kmh": "km/h", "ms": "m/s", "mph": "mph", "kn": "kn"}
+
 
 # ── Background workers ─────────────────────────────────────────────────────
 
@@ -533,8 +535,9 @@ class WeatherWidget(QWidget):
         self._temp_label.setText(f"{temp:.0f}°{sym}")
         self._desc_label.setText(desc)
         self._feels_label.setText(f"Feels like {feels:.0f}°{sym}")
+        wind_lbl = _WIND_DISPLAY.get(self._wind_unit, self._wind_unit)
         self._wind_label.setText(
-            f"💨 {wind:.0f} {self._wind_unit}   💧 {hum}%"
+            f"💨 {wind:.0f} {wind_lbl}   💧 {hum}%"
         )
 
         # Store full hourly payload for day-detail lookups
@@ -558,7 +561,7 @@ class WeatherWidget(QWidget):
             h["windspeed_10m"][start:end],
             h.get("weathercode", [])[start:end],
             sym,
-            self._wind_unit,
+            wind_lbl,
         )
 
         # Daily forecast cards
@@ -629,7 +632,7 @@ class WeatherWidget(QWidget):
             h["windspeed_10m"][s:e],
             h.get("weathercode", [])[s:e],
             self._unit_sym,
-            self._wind_unit,
+            _WIND_DISPLAY.get(self._wind_unit, self._wind_unit),
         )
 
     def _collapse_detail(self):
