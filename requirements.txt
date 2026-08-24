@@ -1,5 +1,4 @@
 PyQt6>=6.6.0
-PyQt6-WebEngine>=6.6.0
 matplotlib>=3.8.0
 requests>=2.31.0
 holidays>=0.46

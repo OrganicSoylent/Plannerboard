@@ -73,8 +73,8 @@ def get_weather(lat, lon, unit="celsius", wind_unit="kmh"):
             "windspeed_10m,relativehumidity_2m,precipitation"
         ),
         "hourly": (
-            "temperature_2m,weathercode,precipitation_probability,"
-            "precipitation,windspeed_10m"
+            "temperature_2m,apparent_temperature,weathercode,"
+            "precipitation_probability,precipitation,windspeed_10m"
         ),
         "daily": (
             "weathercode,temperature_2m_max,temperature_2m_min,"

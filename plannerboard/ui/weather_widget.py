@@ -3,10 +3,10 @@ from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QFrame, QSizePolicy, QDialog, QLineEdit,
-    QListWidget, QListWidgetItem, QDialogButtonBox,
+    QListWidget, QListWidgetItem, QDialogButtonBox, QToolTip,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QCursor
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -169,6 +169,18 @@ class _HourlyChart(FigureCanvasQTAgg):
         self._style()
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(110)
+        self.setMouseTracking(True)
+
+        # Stored for tooltip lookup
+        self._times: list = []
+        self._temps: list = []
+        self._feels: list = []
+        self._precip: list = []
+        self._winds: list = []
+        self._unit_sym = "C"
+        self._wind_unit = "kmh"
+
+        self.mpl_connect("motion_notify_event", self._on_hover)
 
     def _style(self):
         ax = self.ax
@@ -178,7 +190,15 @@ class _HourlyChart(FigureCanvasQTAgg):
             spine.set_color(theme.BORDER)
             spine.set_linewidth(0.5)
 
-    def update_data(self, times, temps, precip_prob, unit_sym):
+    def update_data(self, times, temps, precip_prob, feels, winds, unit_sym, wind_unit):
+        self._times = times
+        self._temps = temps
+        self._feels = feels
+        self._precip = precip_prob
+        self._winds = winds
+        self._unit_sym = unit_sym
+        self._wind_unit = wind_unit
+
         self.ax.clear()
         self._style()
         ax = self.ax
@@ -202,12 +222,33 @@ class _HourlyChart(FigureCanvasQTAgg):
         ax.grid(axis="y", color=theme.BORDER, linewidth=0.4, linestyle="--")
         self.draw()
 
+    def _on_hover(self, event):
+        if event.inaxes is None or not self._times:
+            QToolTip.hideText()
+            return
+        x = event.xdata
+        if x is None:
+            QToolTip.hideText()
+            return
+        idx = max(0, min(round(x), len(self._times) - 1))
+        time_str = self._times[idx][11:16]
+        temp = self._temps[idx]
+        feels = self._feels[idx]
+        precip = self._precip[idx]
+        wind = self._winds[idx]
+        sym = self._unit_sym
+        wu = self._wind_unit
+        text = (
+            f"<b>{time_str}</b><br>"
+            f"🌡 {temp:.0f}°{sym}&nbsp;&nbsp;feels {feels:.0f}°{sym}<br>"
+            f"🌧 {precip:.0f}%&nbsp;&nbsp;💨 {wind:.0f} {wu}"
+        )
+        QToolTip.showText(QCursor.pos(), text, self)
+
 
 # ── Main widget ────────────────────────────────────────────────────────────
 
 class WeatherWidget(QWidget):
-    radar_toggled = pyqtSignal()
-
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self._config = config
@@ -259,7 +300,6 @@ class WeatherWidget(QWidget):
         cur = QHBoxLayout()
         cur.setSpacing(12)
 
-        # Colored icon badge
         self._icon_frame = QFrame()
         self._icon_frame.setFixedSize(68, 68)
         self._icon_frame.setStyleSheet(
@@ -269,13 +309,10 @@ class WeatherWidget(QWidget):
         icon_inner.setContentsMargins(0, 0, 0, 0)
         self._icon_label = QLabel("—")
         self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Use the application's default font (which has fontconfig emoji fallbacks)
-        # at a large point size — do NOT name a specific emoji font, Qt won't find it.
         self._icon_label.setStyleSheet("font-size:28pt; background:transparent;")
         icon_inner.addWidget(self._icon_label)
         cur.addWidget(self._icon_frame)
 
-        # Text details
         details = QVBoxLayout()
         details.setSpacing(2)
         self._temp_label = QLabel("—")
@@ -305,7 +342,7 @@ class WeatherWidget(QWidget):
         # ── Divider ────────────────────────────────────────────────────────
         root.addWidget(self._divider())
 
-        # ── Hourly chart ───────────────────────────────────────────────────
+        # ── Hourly chart (hover for details) ──────────────────────────────
         self._chart = _HourlyChart()
         root.addWidget(self._chart)
 
@@ -334,21 +371,15 @@ class WeatherWidget(QWidget):
         self._forecast_scroll.setWidget(self._forecast_container)
         root.addWidget(self._forecast_scroll)
 
-        # ── Divider ────────────────────────────────────────────────────────
+        # ── Source attribution ─────────────────────────────────────────────
         root.addWidget(self._divider())
-
-        # ── Radar toggle + source line ─────────────────────────────────────
-        bottom = QHBoxLayout()
-        self._radar_btn = QPushButton("🗺  Radar  ▼")
-        self._radar_btn.setFixedHeight(26)
-        self._radar_btn.clicked.connect(self.radar_toggled)
-        bottom.addWidget(self._radar_btn)
-        bottom.addStretch()
+        src_row = QHBoxLayout()
+        src_row.addStretch()
         src = QLabel('<a href="https://open-meteo.com" style="color:#6c7086;">Open-Meteo.com</a>')
         src.setOpenExternalLinks(True)
         src.setStyleSheet("font-size:7pt;background:transparent;")
-        bottom.addWidget(src)
-        root.addLayout(bottom)
+        src_row.addWidget(src)
+        root.addLayout(src_row)
 
         # ── Error label ────────────────────────────────────────────────────
         self._error_label = QLabel("")
@@ -425,7 +456,7 @@ class WeatherWidget(QWidget):
             f"💨 {wind:.0f} {self._wind_unit}   💧 {hum}%"
         )
 
-        # Hourly chart (next 24 h)
+        # Hourly chart (next 24 h from now)
         h = data["hourly"]
         now_str = cur.get("time", "")[:13]
         try:
@@ -433,11 +464,15 @@ class WeatherWidget(QWidget):
         except StopIteration:
             start = 0
         end = start + 24
+
         self._chart.update_data(
             h["time"][start:end],
             h["temperature_2m"][start:end],
             h["precipitation_probability"][start:end],
+            h.get("apparent_temperature", h["temperature_2m"])[start:end],
+            h["windspeed_10m"][start:end],
             sym,
+            self._wind_unit,
         )
 
         # Daily forecast cards
@@ -461,6 +496,3 @@ class WeatherWidget(QWidget):
     def _on_error(self, msg):
         self._refresh_btn.setEnabled(True)
         self._error_label.setText(f"⚠ {msg}")
-
-    def set_radar_open(self, is_open: bool):
-        self._radar_btn.setText("🗺  Radar  ▲" if is_open else "🗺  Radar  ▼")
