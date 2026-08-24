@@ -177,6 +177,7 @@ class _HourlyChart(FigureCanvasQTAgg):
         self._feels: list = []
         self._precip: list = []
         self._winds: list = []
+        self._codes: list = []
         self._unit_sym = "C"
         self._wind_unit = "kmh"
 
@@ -190,12 +191,13 @@ class _HourlyChart(FigureCanvasQTAgg):
             spine.set_color(theme.BORDER)
             spine.set_linewidth(0.5)
 
-    def update_data(self, times, temps, precip_prob, feels, winds, unit_sym, wind_unit):
+    def update_data(self, times, temps, precip_prob, feels, winds, codes, unit_sym, wind_unit):
         self._times = times
         self._temps = temps
         self._feels = feels
         self._precip = precip_prob
         self._winds = winds
+        self._codes = codes
         self._unit_sym = unit_sym
         self._wind_unit = wind_unit
 
@@ -238,8 +240,9 @@ class _HourlyChart(FigureCanvasQTAgg):
         wind = self._winds[idx]
         sym = self._unit_sym
         wu = self._wind_unit
+        icon = ws.wmo_icon(self._codes[idx]) if self._codes else ""
         text = (
-            f"<b>{time_str}</b><br>"
+            f"{icon}&nbsp;&nbsp;<b>{time_str}</b><br>"
             f"🌡 {temp:.0f}°{sym}&nbsp;&nbsp;feels {feels:.0f}°{sym}<br>"
             f"🌧 {precip:.0f}%&nbsp;&nbsp;💨 {wind:.0f} {wu}"
         )
@@ -471,6 +474,7 @@ class WeatherWidget(QWidget):
             h["precipitation_probability"][start:end],
             h.get("apparent_temperature", h["temperature_2m"])[start:end],
             h["windspeed_10m"][start:end],
+            h.get("weathercode", [])[start:end],
             sym,
             self._wind_unit,
         )
