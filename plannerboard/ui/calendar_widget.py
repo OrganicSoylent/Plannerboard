@@ -3,9 +3,9 @@ from datetime import date, timedelta
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QStackedWidget, QSizePolicy,
+    QLabel, QStackedWidget, QSizePolicy, QFrame,
 )
-from PyQt6.QtCore import Qt, QDate
+from PyQt6.QtCore import Qt, QDate, QPropertyAnimation, QEasingCurve
 
 from plannerboard.ui.views.month_view import MonthView
 from plannerboard.ui.views.week_view import WeekView
@@ -81,6 +81,7 @@ class CalendarWidget(QWidget):
             tl.addWidget(btn)
 
         root.addWidget(toolbar)
+        root.setContentsMargins(0, 0, 0, 0)
 
         # Stacked views
         self._stack = QStackedWidget()
@@ -96,13 +97,39 @@ class CalendarWidget(QWidget):
 
         root.addWidget(self._stack, 1)
 
+        # ── Day-detail panel (slides open under the week view) ─────────────
+        self._detail_day: date | None = None
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color:{theme.BORDER};background:{theme.BORDER};max-height:1px;")
+        root.addWidget(sep)
+
+        self._detail_panel = QWidget()
+        self._detail_panel.setStyleSheet(f"background:{theme.BG};")
+        dp_layout = QVBoxLayout(self._detail_panel)
+        dp_layout.setContentsMargins(0, 0, 0, 0)
+        dp_layout.setSpacing(0)
+        self._detail_view = DayView()
+        self._detail_view.slot_double_clicked.connect(self._new_event_timed)
+        dp_layout.addWidget(self._detail_view)
+        self._detail_panel.setMaximumHeight(0)
+        root.addWidget(self._detail_panel)
+
+        self._detail_anim = QPropertyAnimation(self._detail_panel, b"maximumHeight")
+        self._detail_anim.setDuration(260)
+        self._detail_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._detail_anim.finished.connect(self._on_detail_anim_done)
+
         # Connect double-click signals → event dialog
         self._day_view.slot_double_clicked.connect(self._new_event_timed)
         self._week_view.slot_double_clicked.connect(self._new_event_timed)
-        self._month_view.date_double_clicked.connect(
-            lambda d: self._new_event_allday(d)
-        )
+        self._month_view.date_double_clicked.connect(self._new_event_allday)
+        self._month_view.event_double_clicked.connect(self._edit_event)
         self._year_view.month_double_clicked.connect(self._on_year_month_click)
+
+        # Week-view day header click → sliding detail panel
+        self._week_view.day_header_clicked.connect(self._on_day_header_clicked)
 
         self._switch_view(VIEW_MONTH)
 
@@ -113,6 +140,8 @@ class CalendarWidget(QWidget):
         self._stack.setCurrentIndex(idx)
         for i, btn in enumerate(self._view_btns):
             btn.setChecked(i == idx)
+        if idx != VIEW_WEEK:
+            self._collapse_detail()
         self._refresh()
 
     def _refresh(self):
@@ -185,6 +214,34 @@ class CalendarWidget(QWidget):
         self._current = date.today()
         self._refresh()
 
+    # ── day detail panel ──────────────────────────────────────────────────
+
+    def _on_day_header_clicked(self, d: date):
+        if self._detail_day == d:
+            # Same day clicked again → collapse
+            self._collapse_detail()
+        else:
+            self._detail_day = d
+            evts = events_db.get_events_for_date(d)
+            self._detail_view.set_day(d, evts, self._holidays)
+            if self._detail_panel.maximumHeight() < 300:
+                self._detail_anim.stop()
+                self._detail_anim.setStartValue(self._detail_panel.maximumHeight())
+                self._detail_anim.setEndValue(300)
+                self._detail_anim.start()
+
+    def _collapse_detail(self):
+        if self._detail_panel.maximumHeight() > 0:
+            self._detail_anim.stop()
+            self._detail_anim.setStartValue(self._detail_panel.maximumHeight())
+            self._detail_anim.setEndValue(0)
+            self._detail_anim.start()
+        self._detail_day = None
+
+    def _on_detail_anim_done(self):
+        if self._detail_panel.maximumHeight() > 0:
+            self._detail_view.scroll_to_hour(8)
+
     def _on_year_month_click(self, year, month):
         self._current = date(year, month, 1)
         self._switch_view(VIEW_MONTH)
@@ -219,6 +276,15 @@ class CalendarWidget(QWidget):
         if dlg.exec():
             data = dlg.get_data()
             events_db.add_event(**data)
+            self._refresh()
+
+    def _edit_event(self, event: dict):
+        dlg = EventDialog(self, event=event)
+        if dlg.exec():
+            if dlg.deleted:
+                events_db.delete_event(event["id"])
+            else:
+                events_db.update_event(event["id"], **dlg.get_data())
             self._refresh()
 
     def reload(self):

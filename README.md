@@ -5,8 +5,7 @@ A personal organizing dashboard for Linux desktop (optimized for Bazzite/KDE Pla
 ## Features
 
 - **Calendar** — Day, Week, Month, and Year views. Add events and reminders with colors, times, and notes. Public holidays shown automatically for your country/region.
-- **Weather** — Compact panel with current conditions, 24-hour chart, and 7-day forecast. Powered by [Open-Meteo](https://open-meteo.com) (free, no API key required).
-- **Radar** — Live rain/cloud radar map (50 km radius) that slides open on demand. Powered by RainViewer + OpenStreetMap.
+- **Weather** — Compact panel with current conditions, 24-hour chart with hover tooltips (temperature, feels-like, rain chance, wind speed), and 7-day forecast. Powered by [Open-Meteo](https://open-meteo.com) (free, no API key required).
 
 ## Requirements
 

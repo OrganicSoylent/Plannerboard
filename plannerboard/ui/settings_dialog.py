@@ -112,13 +112,21 @@ class SettingsDialog(QDialog):
         uf = QFormLayout(unit_box)
 
         self._temp_cb = QComboBox()
-        self._temp_cb.addItems(["celsius", "fahrenheit"])
-        self._temp_cb.setCurrentText(self._config.get("temperature_unit", "celsius"))
+        for label, code in [("Celsius", "celsius"), ("Fahrenheit", "fahrenheit")]:
+            self._temp_cb.addItem(label, code)
+        saved_temp = self._config.get("temperature_unit", "celsius")
+        idx = self._temp_cb.findData(saved_temp)
+        if idx >= 0:
+            self._temp_cb.setCurrentIndex(idx)
         uf.addRow("Temperature:", self._temp_cb)
 
         self._wind_cb = QComboBox()
-        self._wind_cb.addItems(["kmh", "mph", "ms", "knots"])
-        self._wind_cb.setCurrentText(self._config.get("wind_speed_unit", "kmh"))
+        for label, code in [("km/h", "kmh"), ("mph", "mph"), ("m/s", "ms"), ("kn", "kn")]:
+            self._wind_cb.addItem(label, code)
+        saved_wind = self._config.get("wind_speed_unit", "kmh")
+        idx = self._wind_cb.findData(saved_wind)
+        if idx >= 0:
+            self._wind_cb.setCurrentIndex(idx)
         uf.addRow("Wind speed:", self._wind_cb)
         root.addWidget(unit_box)
 
@@ -169,8 +177,8 @@ class SettingsDialog(QDialog):
         self._config.set("longitude", self._lon_spin.value())
         self._config.set("country", self._country_cb.currentText())
         self._config.set("subdivision", self._subdiv_cb.currentData() or "")
-        self._config.set("temperature_unit", self._temp_cb.currentText())
-        self._config.set("wind_speed_unit", self._wind_cb.currentText())
+        self._config.set("temperature_unit", self._temp_cb.currentData())
+        self._config.set("wind_speed_unit", self._wind_cb.currentData())
 
         if self._autostart_cb is not None:
             if self._autostart_cb.isChecked():

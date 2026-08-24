@@ -17,6 +17,7 @@ TOTAL_H = HOUR_H * (END_HOUR - START_HOUR) + HEADER_H
 class _WeekCanvas(QWidget):
     slot_double_clicked = pyqtSignal(date, int)
     event_double_clicked = pyqtSignal(dict)
+    day_header_clicked = pyqtSignal(date)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -177,6 +178,15 @@ class _WeekCanvas(QWidget):
         self._hover_slot = None
         self.update()
 
+    def mousePressEvent(self, ev):
+        pos = ev.position()
+        x, y = pos.x(), pos.y()
+        # Single click on a day column header → emit for detail panel
+        if y < HEADER_H and x >= TIME_W:
+            col = int((x - TIME_W) / self._col_w(self.width()))
+            if 0 <= col <= 6:
+                self.day_header_clicked.emit(self._days()[col])
+
     def mouseDoubleClickEvent(self, ev):
         slot = self._slot_at(ev.position())
         if slot:
@@ -188,6 +198,7 @@ class _WeekCanvas(QWidget):
 class WeekView(QScrollArea):
     slot_double_clicked = pyqtSignal(date, int)
     event_double_clicked = pyqtSignal(dict)
+    day_header_clicked = pyqtSignal(date)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -197,6 +208,7 @@ class WeekView(QScrollArea):
         self.setWidget(self._canvas)
         self._canvas.slot_double_clicked.connect(self.slot_double_clicked)
         self._canvas.event_double_clicked.connect(self.event_double_clicked)
+        self._canvas.day_header_clicked.connect(self.day_header_clicked)
 
     def set_week(self, week_start, events, holidays):
         self._canvas.set_week(week_start, events, holidays)

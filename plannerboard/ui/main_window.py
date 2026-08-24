@@ -1,13 +1,12 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QSplitter, QMenuBar, QStatusBar, QLabel,
+    QSplitter, QStatusBar,
 )
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction
 
 from plannerboard.ui.calendar_widget import CalendarWidget
 from plannerboard.ui.weather_widget import WeatherWidget
-from plannerboard.ui.radar_panel import RadarPanel
 from plannerboard.ui.settings_dialog import SettingsDialog
 from plannerboard.ui import theme
 from plannerboard.services.location_service import get_location
@@ -69,40 +68,27 @@ class MainWindow(QMainWindow):
         self._calendar = CalendarWidget(self._config)
         splitter.addWidget(self._calendar)
 
-        # Right: weather + radar
+        # Right: weather
         right = QWidget()
         right.setStyleSheet(f"background:{theme.BG};")
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(8, 8, 8, 8)
         right_layout.setSpacing(0)
 
-        lat = self._config.get("latitude") or 51.5
-        lon = self._config.get("longitude") or 7.0
-
         self._weather = WeatherWidget(self._config)
-        self._weather.radar_toggled.connect(self._toggle_radar)
         right_layout.addWidget(self._weather, 0)
-
-        self._radar = RadarPanel(lat=lat, lon=lon)
-        right_layout.addWidget(self._radar, 0)
-
         right_layout.addStretch(1)
         splitter.addWidget(right)
 
         splitter.setSizes([950, 450])
         main_layout.addWidget(splitter)
 
-        # Status bar
         self._status = QStatusBar()
         self._status.setStyleSheet(
             f"background:{theme.SURFACE};color:{theme.SUBTEXT};font-size:8pt;"
         )
         self.setStatusBar(self._status)
         self._status.showMessage("Ready")
-
-    def _toggle_radar(self):
-        is_open = self._radar.toggle()
-        self._weather.set_radar_open(is_open)
 
     # ── menu ──────────────────────────────────────────────────────────────
 
@@ -116,7 +102,6 @@ class MainWindow(QMainWindow):
             f"QMenu::item:selected {{ background:{theme.BLUE}; color:{theme.BG}; }}"
         )
 
-        # File menu
         file_menu = mb.addMenu("File")
 
         settings_action = QAction("Settings…", self)
@@ -131,7 +116,6 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
-        # View menu
         view_menu = mb.addMenu("View")
 
         refresh_action = QAction("Refresh Weather", self)
@@ -150,7 +134,6 @@ class MainWindow(QMainWindow):
             country = self._config.get("country", "")
             if lat and lon:
                 self._weather.set_location(lat, lon, city, country)
-                self._radar.set_location(lat, lon)
             self._calendar.reload()
             self._status.showMessage("Settings saved", 3000)
 
@@ -175,7 +158,6 @@ class MainWindow(QMainWindow):
         self._weather.set_location(
             loc["lat"], loc["lon"], loc["city"], loc["country_code"]
         )
-        self._radar.set_location(loc["lat"], loc["lon"])
         self._calendar.reload()
         self._status.showMessage(
             f"Location detected: {loc['city']}, {loc['country_code']}", 4000

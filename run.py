@@ -1,7 +1,7 @@
+import os
 import sys
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
 
 from plannerboard.config import Config
 from plannerboard.data.events_db import init_db
