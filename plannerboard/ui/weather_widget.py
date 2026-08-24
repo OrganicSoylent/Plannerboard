@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QFrame, QSizePolicy, QDialog, QLineEdit,
     QListWidget, QListWidgetItem, QDialogButtonBox, QToolTip,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont, QCursor
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -139,9 +139,13 @@ class LocationSearchDialog(QDialog):
 # ── Sub-widgets ────────────────────────────────────────────────────────────
 
 class _DayCard(QFrame):
-    def __init__(self, day_name, icon, t_max, t_min, unit_sym, parent=None):
+    clicked = pyqtSignal(int)  # day index (0 = today)
+
+    def __init__(self, day_idx, day_name, icon, t_max, t_min, unit_sym, parent=None):
         super().__init__(parent)
+        self._day_idx = day_idx
         self.setFixedWidth(56)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 4, 2, 4)
         layout.setSpacing(1)
@@ -158,6 +162,13 @@ class _DayCard(QFrame):
         layout.addWidget(lbl(icon, 13))
         layout.addWidget(lbl(f"{t_max:.0f}°{unit_sym}", 9, theme.TEXT, True))
         layout.addWidget(lbl(f"{t_min:.0f}°{unit_sym}", 8, theme.SUBTEXT))
+
+    def set_selected(self, selected: bool):
+        border = f"border:1px solid {theme.BLUE};border-radius:6px;" if selected else ""
+        self.setStyleSheet(border)
+
+    def mousePressEvent(self, _ev):
+        self.clicked.emit(self._day_idx)
 
 
 class _HourlyChart(FigureCanvasQTAgg):
@@ -262,6 +273,10 @@ class WeatherWidget(QWidget):
         self._unit = config.get("temperature_unit", "celsius")
         self._wind_unit = config.get("wind_speed_unit", "kmh")
         self._unit_sym = "C" if self._unit == "celsius" else "F"
+        self._hourly_data: dict = {}
+        self._daily_times: list = []
+        self._day_cards: list[_DayCard] = []
+        self._detail_day_idx: int | None = None
         self._build_ui()
 
         self._timer = QTimer(self)
@@ -374,6 +389,41 @@ class WeatherWidget(QWidget):
         self._forecast_scroll.setWidget(self._forecast_container)
         root.addWidget(self._forecast_scroll)
 
+        # ── Day detail panel (slides open under 7-day strip) ──────────────
+        self._detail_panel = QWidget()
+        self._detail_panel.setStyleSheet(
+            f"background:{theme.SURFACE};border-top:1px solid {theme.BORDER};"
+        )
+        dp = QVBoxLayout(self._detail_panel)
+        dp.setContentsMargins(6, 6, 6, 6)
+        dp.setSpacing(4)
+
+        dp_hdr = QHBoxLayout()
+        self._detail_label = QLabel("")
+        self._detail_label.setStyleSheet(
+            f"color:{theme.TEXT};font-size:9pt;font-weight:bold;background:transparent;"
+        )
+        dp_hdr.addWidget(self._detail_label)
+        dp_hdr.addStretch()
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(22, 22)
+        close_btn.setStyleSheet(
+            f"background:transparent;color:{theme.SUBTEXT};border:none;font-size:13pt;"
+        )
+        close_btn.clicked.connect(self._collapse_detail)
+        dp_hdr.addWidget(close_btn)
+        dp.addLayout(dp_hdr)
+
+        self._detail_chart = _HourlyChart()
+        dp.addWidget(self._detail_chart)
+
+        self._detail_panel.setMaximumHeight(0)
+        root.addWidget(self._detail_panel)
+
+        self._detail_anim = QPropertyAnimation(self._detail_panel, b"maximumHeight")
+        self._detail_anim.setDuration(260)
+        self._detail_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
         # ── Source attribution ─────────────────────────────────────────────
         root.addWidget(self._divider())
         src_row = QHBoxLayout()
@@ -459,8 +509,12 @@ class WeatherWidget(QWidget):
             f"💨 {wind:.0f} {self._wind_unit}   💧 {hum}%"
         )
 
-        # Hourly chart (next 24 h from now)
+        # Store full hourly payload for day-detail lookups
         h = data["hourly"]
+        self._hourly_data = h
+        self._daily_times = data["daily"]["time"]
+
+        # Hourly chart (next 24 h from now)
         now_str = cur.get("time", "")[:13]
         try:
             start = next(i for i, t in enumerate(h["time"]) if t[:13] >= now_str)
@@ -484,19 +538,76 @@ class WeatherWidget(QWidget):
             item = self._forecast_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self._day_cards.clear()
 
         d = data["daily"]
         for i in range(min(7, len(d["time"]))):
             dt = datetime.fromisoformat(d["time"][i])
             card = _DayCard(
+                i,
                 dt.strftime("%a"),
                 ws.wmo_icon(d["weathercode"][i]),
                 d["temperature_2m_max"][i],
                 d["temperature_2m_min"][i],
                 sym,
             )
+            card.clicked.connect(self._on_day_card_clicked)
+            self._day_cards.append(card)
             self._forecast_layout.insertWidget(i, card)
+
+        # Refresh detail panel if it's already open
+        if self._detail_day_idx is not None and self._detail_panel.maximumHeight() > 0:
+            self._update_detail(self._detail_day_idx)
 
     def _on_error(self, msg):
         self._refresh_btn.setEnabled(True)
         self._error_label.setText(f"⚠ {msg}")
+
+    # ── day detail panel ───────────────────────────────────────────────────
+
+    def _on_day_card_clicked(self, day_idx: int):
+        if self._detail_day_idx == day_idx:
+            self._collapse_detail()
+            return
+        self._detail_day_idx = day_idx
+        self._update_detail(day_idx)
+        # Update selection highlight
+        for card in self._day_cards:
+            card.set_selected(card._day_idx == day_idx)
+        # Animate open only if currently closed
+        if self._detail_panel.maximumHeight() < 160:
+            self._detail_anim.stop()
+            self._detail_anim.setStartValue(self._detail_panel.maximumHeight())
+            self._detail_anim.setEndValue(160)
+            self._detail_anim.start()
+
+    def _update_detail(self, day_idx: int):
+        if not self._hourly_data or day_idx >= len(self._daily_times):
+            return
+        day_date = self._daily_times[day_idx]
+        h = self._hourly_data
+        indices = [i for i, t in enumerate(h["time"]) if t.startswith(day_date)]
+        if not indices:
+            return
+        s, e = indices[0], indices[-1] + 1
+        dt = datetime.fromisoformat(day_date)
+        self._detail_label.setText(dt.strftime("%A, %-d %B"))
+        self._detail_chart.update_data(
+            h["time"][s:e],
+            h["temperature_2m"][s:e],
+            h["precipitation_probability"][s:e],
+            h.get("apparent_temperature", h["temperature_2m"])[s:e],
+            h["windspeed_10m"][s:e],
+            h.get("weathercode", [])[s:e],
+            self._unit_sym,
+            self._wind_unit,
+        )
+
+    def _collapse_detail(self):
+        self._detail_day_idx = None
+        for card in self._day_cards:
+            card.set_selected(False)
+        self._detail_anim.stop()
+        self._detail_anim.setStartValue(self._detail_panel.maximumHeight())
+        self._detail_anim.setEndValue(0)
+        self._detail_anim.start()
