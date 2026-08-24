@@ -141,10 +141,10 @@ class LocationSearchDialog(QDialog):
 class _DayCard(QFrame):
     clicked = pyqtSignal(int)  # day index (0 = today)
 
-    def __init__(self, day_idx, day_name, icon, t_max, t_min, unit_sym, parent=None):
+    def __init__(self, day_idx, day_name, date_str, icon, t_max, t_min, unit_sym, parent=None):
         super().__init__(parent)
         self._day_idx = day_idx
-        self.setFixedWidth(56)
+        self.setFixedWidth(60)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 4, 2, 4)
@@ -158,7 +158,8 @@ class _DayCard(QFrame):
             l.setStyleSheet(f"color:{color};background:transparent;")
             return l
 
-        layout.addWidget(lbl(day_name, 8, theme.SUBTEXT))
+        layout.addWidget(lbl(day_name, 8, theme.SUBTEXT, bold=True))
+        layout.addWidget(lbl(date_str, 7, theme.SUBTEXT))
         layout.addWidget(lbl(icon, 13))
         layout.addWidget(lbl(f"{t_max:.0f}°{unit_sym}", 9, theme.TEXT, True))
         layout.addWidget(lbl(f"{t_min:.0f}°{unit_sym}", 8, theme.SUBTEXT))
@@ -360,12 +361,34 @@ class WeatherWidget(QWidget):
         # ── Divider ────────────────────────────────────────────────────────
         root.addWidget(self._divider())
 
+        # ── Today's forecast section header ───────────────────────────────
+        today_hdr = QHBoxLayout()
+        today_title = QLabel("Today's Weather Forecast")
+        today_title.setStyleSheet(
+            f"color:{theme.TEXT};font-size:8pt;font-weight:bold;background:transparent;"
+        )
+        today_hdr.addWidget(today_title)
+        today_hdr.addStretch()
+        self._today_date_lbl = QLabel(datetime.today().strftime("%d.%m.%Y"))
+        self._today_date_lbl.setStyleSheet(
+            f"color:{theme.SUBTEXT};font-size:8pt;background:transparent;"
+        )
+        today_hdr.addWidget(self._today_date_lbl)
+        root.addLayout(today_hdr)
+
         # ── Hourly chart (hover for details) ──────────────────────────────
         self._chart = _HourlyChart()
         root.addWidget(self._chart)
 
         # ── Divider ────────────────────────────────────────────────────────
         root.addWidget(self._divider())
+
+        # ── Week's forecast section header ────────────────────────────────
+        week_title = QLabel("Week's Weather Forecast")
+        week_title.setStyleSheet(
+            f"color:{theme.TEXT};font-size:8pt;font-weight:bold;background:transparent;"
+        )
+        root.addWidget(week_title)
 
         # ── Daily forecast strip ───────────────────────────────────────────
         self._forecast_scroll = QScrollArea()
@@ -375,7 +398,7 @@ class WeatherWidget(QWidget):
         self._forecast_scroll.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self._forecast_scroll.setFixedHeight(90)
+        self._forecast_scroll.setFixedHeight(108)
         self._forecast_scroll.setWidgetResizable(True)
         self._forecast_scroll.setStyleSheet(
             f"background:{theme.SURFACE};border:none;"
@@ -546,6 +569,7 @@ class WeatherWidget(QWidget):
             card = _DayCard(
                 i,
                 dt.strftime("%a"),
+                dt.strftime("%d.%m."),
                 ws.wmo_icon(d["weathercode"][i]),
                 d["temperature_2m_max"][i],
                 d["temperature_2m_min"][i],
