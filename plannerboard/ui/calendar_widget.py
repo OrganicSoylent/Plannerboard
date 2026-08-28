@@ -14,6 +14,7 @@ from plannerboard.ui.views.year_view import YearView
 from plannerboard.ui.event_dialog import EventDialog
 from plannerboard.data import events_db
 from plannerboard.data.holidays_service import get_holidays
+from plannerboard.data.liturgical_service import get_liturgical_calendar
 from plannerboard.ui import theme
 
 VIEW_DAY = 0
@@ -30,8 +31,12 @@ class CalendarWidget(QWidget):
         self._current = date.today()
         self._holidays = {}
         self._loaded_hol_year = None
+        self._liturgical: dict = {}
+        self._loaded_lit_year: int | None = None
+        self._liturgical_enabled: bool = config.get("liturgical_calendar", False)
         self._build_ui()
         self._load_holidays(self._current.year)
+        self._load_liturgical(self._current.year)
         self._refresh()
 
     # ── UI construction ────────────────────────────────────────────────────
@@ -79,6 +84,15 @@ class CalendarWidget(QWidget):
             btn.clicked.connect(lambda _, i=idx: self._switch_view(i))
             self._view_btns.append(btn)
             tl.addWidget(btn)
+
+        # Liturgical calendar toggle
+        self._lit_btn = QPushButton("✝")
+        self._lit_btn.setCheckable(True)
+        self._lit_btn.setChecked(self._liturgical_enabled)
+        self._lit_btn.setFixedSize(28, 28)
+        self._lit_btn.setToolTip("Catholic Liturgical Calendar")
+        self._lit_btn.clicked.connect(self._toggle_liturgical)
+        tl.addWidget(self._lit_btn)
 
         root.addWidget(toolbar)
         root.setContentsMargins(0, 0, 0, 0)
@@ -146,30 +160,31 @@ class CalendarWidget(QWidget):
 
     def _refresh(self):
         self._ensure_holidays(self._current.year)
+        self._ensure_liturgical(self._current.year)
         self._update_date_label()
+        hols = self._get_display_holidays()
 
         if self._view_idx == VIEW_DAY:
             evts = events_db.get_events_for_date(self._current)
-            self._day_view.set_day(self._current, evts, self._holidays)
+            self._day_view.set_day(self._current, evts, hols)
             self._day_view.scroll_to_hour(8)
 
         elif self._view_idx == VIEW_WEEK:
             monday = self._current - timedelta(days=self._current.weekday())
             sunday = monday + timedelta(6)
             evts = events_db.get_events_for_range(monday, sunday)
-            self._week_view.set_week(monday, evts, self._holidays)
+            self._week_view.set_week(monday, evts, hols)
             self._week_view.scroll_to_hour(8)
 
         elif self._view_idx == VIEW_MONTH:
             evts = events_db.get_events_for_month(self._current.year, self._current.month)
             self._month_view.set_period(
-                self._current.year, self._current.month, evts, self._holidays
+                self._current.year, self._current.month, evts, hols
             )
 
         elif self._view_idx == VIEW_YEAR:
-            self._ensure_holidays(self._current.year)
             evts = events_db.get_events_for_year(self._current.year)
-            self._year_view.set_period(self._current.year, evts, self._holidays)
+            self._year_view.set_period(self._current.year, evts, hols)
 
     def _update_date_label(self):
         if self._view_idx == VIEW_DAY:
@@ -245,6 +260,32 @@ class CalendarWidget(QWidget):
     def _on_year_month_click(self, year, month):
         self._current = date(year, month, 1)
         self._switch_view(VIEW_MONTH)
+
+    # ── liturgical calendar ────────────────────────────────────────────────
+
+    def _toggle_liturgical(self):
+        self._liturgical_enabled = self._lit_btn.isChecked()
+        self._config.set("liturgical_calendar", self._liturgical_enabled)
+        self._refresh()
+
+    def _load_liturgical(self, year):
+        self._liturgical = get_liturgical_calendar(year)
+        self._loaded_lit_year = year
+
+    def _ensure_liturgical(self, year):
+        if year != self._loaded_lit_year:
+            self._load_liturgical(year)
+
+    def _get_display_holidays(self) -> dict:
+        """Merge public holidays with liturgical feasts when enabled."""
+        merged = dict(self._holidays)
+        if self._liturgical_enabled:
+            for d, name in self._liturgical.items():
+                if d in merged:
+                    merged[d] = f"{merged[d]} | ✝ {name}"
+                else:
+                    merged[d] = f"✝ {name}"
+        return merged
 
     # ── holidays ──────────────────────────────────────────────────────────
 
