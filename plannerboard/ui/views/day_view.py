@@ -17,6 +17,7 @@ TOTAL_H = HOUR_H * (END_HOUR - START_HOUR) + HEADER_H
 class _DayCanvas(QWidget):
     slot_double_clicked = pyqtSignal(date, int)
     event_double_clicked = pyqtSignal(dict)
+    event_clicked = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -26,6 +27,7 @@ class _DayCanvas(QWidget):
         self.setFixedHeight(TOTAL_H)
         self.setMouseTracking(True)
         self._hover_hour: int | None = None
+        self._event_rects: list[tuple] = []
 
     def set_day(self, d: date, events, holidays):
         self._date = d
@@ -39,6 +41,7 @@ class _DayCanvas(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._event_rects = []
         self._draw(p)
 
     def _draw(self, p):
@@ -106,15 +109,26 @@ class _DayCanvas(QWidget):
                 duration = (ep[0] + ep[1] / 60) - (tp[0] + tp[1] / 60)
             eh = max(HOUR_H * duration - 2, 20)
             clr = QColor(ev.get("color", theme.BLUE))
-            p.fillRect(QRectF(TIME_W + 4, ey, w - TIME_W - 8, eh), clr)
+            ev_rect = QRectF(TIME_W + 4, ey, w - TIME_W - 8, eh)
+            p.fillRect(ev_rect, clr)
             p.setPen(QColor(theme.BG))
+            # Time on left, title on right
+            time_str = ev["time"][:5]
+            time_w = 46
+            text_h = min(eh, 18)
+            p.setFont(QFont("Sans", 8))
+            p.drawText(QRectF(TIME_W + 6, ey + 2, time_w, text_h),
+                       Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                       time_str)
             p.setFont(QFont("Sans", 9, QFont.Weight.Bold))
-            p.drawText(QRectF(TIME_W + 8, ey + 2, w - TIME_W - 16, min(eh, 18)),
-                       Qt.AlignmentFlag.AlignVCenter, ev["title"])
+            p.drawText(QRectF(TIME_W + time_w + 6, ey + 2, w - TIME_W - time_w - 14, text_h),
+                       Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                       ev["title"])
             if ev.get("notes") and eh > 30:
                 p.setFont(QFont("Sans", 8))
                 p.drawText(QRectF(TIME_W + 8, ey + 18, w - TIME_W - 16, eh - 20),
                            Qt.AlignmentFlag.AlignTop, ev["notes"])
+            self._event_rects.append((ev_rect, ev))
 
     def _hour_at(self, pos):
         y = pos.y()
@@ -122,6 +136,12 @@ class _DayCanvas(QWidget):
             return None
         h = int((y - HEADER_H) / HOUR_H) + START_HOUR
         return h if START_HOUR <= h < END_HOUR else None
+
+    def _event_at(self, pos):
+        for rect, ev in self._event_rects:
+            if rect.contains(pos.x(), pos.y()):
+                return ev
+        return None
 
     def mouseMoveEvent(self, ev):
         h = self._hour_at(ev.position())
@@ -133,7 +153,14 @@ class _DayCanvas(QWidget):
         self._hover_hour = None
         self.update()
 
+    def mousePressEvent(self, ev):
+        hit = self._event_at(ev.position())
+        if hit:
+            self.event_clicked.emit(hit)
+
     def mouseDoubleClickEvent(self, ev):
+        if self._event_at(ev.position()):
+            return  # single click already handles events
         h = self._hour_at(ev.position())
         if h is not None:
             self.slot_double_clicked.emit(self._date, h)
@@ -142,6 +169,7 @@ class _DayCanvas(QWidget):
 class DayView(QScrollArea):
     slot_double_clicked = pyqtSignal(date, int)
     event_double_clicked = pyqtSignal(dict)
+    event_clicked = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -151,6 +179,7 @@ class DayView(QScrollArea):
         self.setWidget(self._canvas)
         self._canvas.slot_double_clicked.connect(self.slot_double_clicked)
         self._canvas.event_double_clicked.connect(self.event_double_clicked)
+        self._canvas.event_clicked.connect(self.event_clicked)
 
     def set_day(self, d, events, holidays):
         self._canvas.set_day(d, events, holidays)

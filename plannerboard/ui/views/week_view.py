@@ -18,6 +18,7 @@ class _WeekCanvas(QWidget):
     slot_double_clicked = pyqtSignal(date, int)
     event_double_clicked = pyqtSignal(dict)
     day_header_clicked = pyqtSignal(date)
+    event_clicked = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,6 +28,7 @@ class _WeekCanvas(QWidget):
         self.setFixedHeight(TOTAL_H)
         self.setMouseTracking(True)
         self._hover_slot: tuple | None = None
+        self._event_rects: list[tuple] = []
 
     def set_week(self, week_start: date, events, holidays):
         self._week_start = week_start
@@ -52,6 +54,7 @@ class _WeekCanvas(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._event_rects = []
         self._draw(p)
 
     def _draw(self, p):
@@ -139,11 +142,22 @@ class _WeekCanvas(QWidget):
                     duration = (ep[0] + ep[1] / 60) - (t_parts[0] + t_parts[1] / 60)
                 eh = max(HOUR_H * duration - 2, 14)
                 clr = QColor(ev.get("color", theme.BLUE))
-                p.fillRect(QRectF(x, ey, cw, eh), clr)
+                ev_rect = QRectF(x, ey, cw, eh)
+                p.fillRect(ev_rect, clr)
                 p.setPen(QColor(theme.BG))
+                # Time on left, title on right
+                time_str = ev["time"][:5]
+                time_w = 30
+                text_h = min(eh, 14)
+                p.setFont(QFont("Sans", 7))
+                p.drawText(QRectF(x + 2, ey + 1, time_w, text_h),
+                           Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                           time_str)
                 p.setFont(QFont("Sans", 8, QFont.Weight.Bold))
-                p.drawText(QRectF(x + 2, ey + 1, cw - 4, min(eh, 16)),
-                           Qt.AlignmentFlag.AlignVCenter, ev["title"])
+                p.drawText(QRectF(x + time_w + 2, ey + 1, cw - time_w - 4, text_h),
+                           Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                           ev["title"])
+                self._event_rects.append((ev_rect, ev))
 
         # Hover highlight
         if self._hover_slot:
@@ -178,6 +192,12 @@ class _WeekCanvas(QWidget):
         self._hover_slot = None
         self.update()
 
+    def _event_at(self, pos):
+        for rect, ev in self._event_rects:
+            if rect.contains(pos.x(), pos.y()):
+                return ev
+        return None
+
     def mousePressEvent(self, ev):
         pos = ev.position()
         x, y = pos.x(), pos.y()
@@ -186,8 +206,15 @@ class _WeekCanvas(QWidget):
             col = int((x - TIME_W) / self._col_w(self.width()))
             if 0 <= col <= 6:
                 self.day_header_clicked.emit(self._days()[col])
+            return
+        # Single click on a timed event → detail view
+        hit = self._event_at(pos)
+        if hit:
+            self.event_clicked.emit(hit)
 
     def mouseDoubleClickEvent(self, ev):
+        if self._event_at(ev.position()):
+            return  # single click already handles events
         slot = self._slot_at(ev.position())
         if slot:
             col, hour = slot
@@ -199,6 +226,7 @@ class WeekView(QScrollArea):
     slot_double_clicked = pyqtSignal(date, int)
     event_double_clicked = pyqtSignal(dict)
     day_header_clicked = pyqtSignal(date)
+    event_clicked = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -209,6 +237,7 @@ class WeekView(QScrollArea):
         self._canvas.slot_double_clicked.connect(self.slot_double_clicked)
         self._canvas.event_double_clicked.connect(self.event_double_clicked)
         self._canvas.day_header_clicked.connect(self.day_header_clicked)
+        self._canvas.event_clicked.connect(self.event_clicked)
 
     def set_week(self, week_start, events, holidays):
         self._canvas.set_week(week_start, events, holidays)

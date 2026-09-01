@@ -27,7 +27,8 @@ def _month_grid(year, month):
 
 class MonthView(QWidget):
     date_double_clicked = pyqtSignal(object)   # date
-    event_double_clicked = pyqtSignal(dict)    # event dict
+    event_double_clicked = pyqtSignal(dict)    # event dict (kept for compat)
+    event_clicked = pyqtSignal(dict)           # single-click → detail view
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -193,10 +194,25 @@ class MonthView(QWidget):
                     clr.setAlpha(220)
                     p.fillRect(ev_rect, clr)
                     p.setPen(QColor(theme.BG))
-                    p.setFont(QFont("Sans", 8))
-                    p.drawText(ev_rect.adjusted(2, 0, -2, 0),
-                               Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
-                               ev["title"])
+
+                    # Time on left, title on right
+                    has_time = not ev.get("all_day") and ev.get("time")
+                    if has_time:
+                        time_str = ev["time"][:5]
+                        time_w = 32
+                        p.setFont(QFont("Sans", 7))
+                        p.drawText(ev_rect.adjusted(2, 0, -(ev_rect.width() - time_w), 0),
+                                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                                   time_str)
+                        p.setFont(QFont("Sans", 8))
+                        p.drawText(ev_rect.adjusted(time_w + 2, 0, -2, 0),
+                                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                                   ev["title"])
+                    else:
+                        p.setFont(QFont("Sans", 8))
+                        p.drawText(ev_rect.adjusted(2, 0, -2, 0),
+                                   Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                                   ev["title"])
                     self._event_rects.append((ev_rect, ev))
 
                 if overflow > 0:
@@ -239,12 +255,16 @@ class MonthView(QWidget):
         self._hover = None
         self.update()
 
-    def mouseDoubleClickEvent(self, ev):
+    def mousePressEvent(self, ev):
         pos = ev.position()
         hit = self._event_at(pos)
         if hit:
-            self.event_double_clicked.emit(hit)
-        else:
-            d = self._cell_date(pos)
-            if d:
-                self.date_double_clicked.emit(d)
+            self.event_clicked.emit(hit)
+
+    def mouseDoubleClickEvent(self, ev):
+        pos = ev.position()
+        if self._event_at(pos):
+            return  # single click already handles events
+        d = self._cell_date(pos)
+        if d:
+            self.date_double_clicked.emit(d)

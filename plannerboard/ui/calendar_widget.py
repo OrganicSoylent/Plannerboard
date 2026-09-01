@@ -11,7 +11,7 @@ from plannerboard.ui.views.month_view import MonthView
 from plannerboard.ui.views.week_view import WeekView
 from plannerboard.ui.views.day_view import DayView
 from plannerboard.ui.views.year_view import YearView
-from plannerboard.ui.event_dialog import EventDialog
+from plannerboard.ui.event_dialog import EventDialog, EventDetailDialog
 from plannerboard.data import events_db
 from plannerboard.data.holidays_service import get_holidays
 from plannerboard.data.liturgical_service import get_liturgical_calendar
@@ -141,6 +141,11 @@ class CalendarWidget(QWidget):
         self._month_view.date_double_clicked.connect(self._new_event_allday)
         self._month_view.event_double_clicked.connect(self._edit_event)
         self._year_view.month_double_clicked.connect(self._on_year_month_click)
+
+        # Single click on any event → detail view
+        self._day_view.event_clicked.connect(self._on_event_clicked)
+        self._week_view.event_clicked.connect(self._on_event_clicked)
+        self._month_view.event_clicked.connect(self._on_event_clicked)
 
         # Week-view day header click → sliding detail panel
         self._week_view.day_header_clicked.connect(self._on_day_header_clicked)
@@ -300,6 +305,12 @@ class CalendarWidget(QWidget):
             self._load_holidays(year)
 
     # ── event creation ────────────────────────────────────────────────────
+
+    def _on_event_clicked(self, event: dict):
+        dlg = EventDetailDialog(event, self)
+        if dlg.exec():
+            if dlg.edited or dlg.deleted:
+                self._refresh()
 
     def _new_event_allday(self, d: date):
         dlg = EventDialog(self, initial_date=d)

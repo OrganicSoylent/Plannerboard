@@ -6,7 +6,109 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox, QWidget, QFrame,
 )
 from PyQt6.QtCore import QDate, QTime
+from PyQt6.QtGui import QFont
 from plannerboard.ui import theme
+
+
+class EventDetailDialog(QDialog):
+    """Read-only event detail view with an Edit button."""
+
+    def __init__(self, event: dict, parent=None):
+        super().__init__(parent)
+        self._event = event
+        self._edited = False
+        self._deleted = False
+        self.setWindowTitle("Event Details")
+        self.setMinimumWidth(380)
+        self._build()
+
+    def _build(self):
+        from plannerboard.data import events_db as _db
+        self._db = _db
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        # Color dot + title
+        title_row = QHBoxLayout()
+        dot = QFrame()
+        dot.setFixedSize(14, 14)
+        dot.setStyleSheet(
+            f"background:{self._event.get('color', theme.BLUE)};border-radius:7px;"
+        )
+        title_row.addWidget(dot)
+        title_lbl = QLabel(self._event.get("title", ""))
+        title_lbl.setFont(QFont("Sans", 14, QFont.Weight.Bold))
+        title_lbl.setStyleSheet(f"color:{theme.TEXT};background:transparent;")
+        title_lbl.setWordWrap(True)
+        title_row.addWidget(title_lbl, 1)
+        layout.addLayout(title_row)
+
+        # Date
+        d = date.fromisoformat(self._event["date"])
+        date_str = d.strftime("%A, %-d %B %Y")
+        if self._event.get("end_date") and self._event["end_date"] != self._event["date"]:
+            ed = date.fromisoformat(self._event["end_date"])
+            date_str += f" – {ed.strftime('%-d %B %Y')}"
+        layout.addWidget(self._sub(f"📅 {date_str}"))
+
+        # Time
+        if not self._event.get("all_day") and self._event.get("time"):
+            t = self._event["time"][:5]
+            et = (self._event.get("end_time") or "")[:5]
+            time_str = f"{t} – {et}" if et else t
+            layout.addWidget(self._sub(f"⏰ {time_str}"))
+
+        # Notes
+        notes = (self._event.get("notes") or "").strip()
+        if notes:
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.HLine)
+            sep.setStyleSheet(f"color:{theme.BORDER};")
+            layout.addWidget(sep)
+            notes_lbl = QLabel(notes)
+            notes_lbl.setWordWrap(True)
+            notes_lbl.setStyleSheet(
+                f"color:{theme.SUBTEXT};font-size:9pt;background:transparent;"
+            )
+            layout.addWidget(notes_lbl)
+
+        layout.addStretch()
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        edit_btn = QPushButton("Edit")
+        edit_btn.clicked.connect(self._on_edit)
+        btn_row.addWidget(edit_btn)
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.reject)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+    def _sub(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet(f"color:{theme.SUBTEXT};font-size:10pt;background:transparent;")
+        return lbl
+
+    def _on_edit(self):
+        dlg = EventDialog(self, event=self._event)
+        if dlg.exec():
+            if dlg.deleted:
+                self._db.delete_event(self._event["id"])
+                self._deleted = True
+            else:
+                self._db.update_event(self._event["id"], **dlg.get_data())
+                self._edited = True
+            self.accept()
+
+    @property
+    def edited(self) -> bool:
+        return self._edited
+
+    @property
+    def deleted(self) -> bool:
+        return self._deleted
 
 
 class EventDialog(QDialog):
