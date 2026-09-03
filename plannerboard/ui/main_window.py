@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QSplitter, QStatusBar,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction
 
 from plannerboard.ui.calendar_widget import CalendarWidget
@@ -10,6 +10,8 @@ from plannerboard.ui.weather_widget import WeatherWidget
 from plannerboard.ui.settings_dialog import SettingsDialog
 from plannerboard.ui import theme
 from plannerboard.services.location_service import get_location
+from plannerboard.services import reminder_service
+from plannerboard.data import events_db
 
 
 class _LocationFetcher(QThread):
@@ -30,6 +32,11 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_menu()
         self._auto_locate()
+
+        self._reminder_timer = QTimer(self)
+        self._reminder_timer.timeout.connect(self._check_reminders)
+        self._reminder_timer.start(30_000)  # check every 30 seconds
+        self._check_reminders()  # check immediately on startup
 
     # ── geometry ──────────────────────────────────────────────────────────
 
@@ -136,6 +143,13 @@ class MainWindow(QMainWindow):
                 self._weather.set_location(lat, lon, city, country)
             self._calendar.reload()
             self._status.showMessage("Settings saved", 3000)
+
+    # ── reminders ─────────────────────────────────────────────────────────
+
+    def _check_reminders(self):
+        for event, fired_key in events_db.get_due_reminders():
+            events_db.mark_reminder_fired(event["id"], fired_key)
+            reminder_service.fire_reminder(event)
 
     # ── auto-location ─────────────────────────────────────────────────────
 

@@ -3,7 +3,7 @@ from datetime import date
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QTextEdit, QPushButton, QCheckBox, QDateEdit, QTimeEdit,
-    QDialogButtonBox, QWidget, QFrame,
+    QComboBox, QDialogButtonBox, QWidget, QFrame,
 )
 from PyQt6.QtCore import QDate, QTime
 from PyQt6.QtGui import QFont
@@ -58,6 +58,17 @@ class EventDetailDialog(QDialog):
             et = (self._event.get("end_time") or "")[:5]
             time_str = f"{t} – {et}" if et else t
             layout.addWidget(self._sub(f"⏰ {time_str}"))
+
+        # Reminder
+        reminder = self._event.get("reminder")
+        if reminder is not None and not self._event.get("all_day"):
+            _REMINDER_LABELS = {
+                0: "At event time", 5: "5 min before", 10: "10 min before",
+                15: "15 min before", 30: "30 min before", 60: "1 hour before",
+                120: "2 hours before", 1440: "1 day before",
+            }
+            lbl = _REMINDER_LABELS.get(int(reminder), f"{reminder} min before")
+            layout.addWidget(self._sub(f"🔔 {lbl}"))
 
         # Notes
         notes = (self._event.get("notes") or "").strip()
@@ -186,6 +197,29 @@ class EventDialog(QDialog):
         self.all_day_cb.toggled.connect(self.time_row.setHidden)
         self.time_row.setHidden(True)
 
+        # ── Reminder ──────────────────────────────────────────────────────
+        self._reminder_row = QWidget()
+        rr = QHBoxLayout(self._reminder_row)
+        rr.setContentsMargins(0, 0, 0, 0)
+        rr.addWidget(QLabel("Reminder"))
+        self._reminder_cb = QComboBox()
+        for label, minutes in [
+            ("No reminder", None),
+            ("At event time", 0),
+            ("5 minutes before", 5),
+            ("10 minutes before", 10),
+            ("15 minutes before", 15),
+            ("30 minutes before", 30),
+            ("1 hour before", 60),
+            ("2 hours before", 120),
+            ("1 day before", 1440),
+        ]:
+            self._reminder_cb.addItem(label, minutes)
+        rr.addWidget(self._reminder_cb, 1)
+        layout.addWidget(self._reminder_row)
+        self.all_day_cb.toggled.connect(self._reminder_row.setHidden)
+        self._reminder_row.setHidden(True)
+
         # ── Color picker ──────────────────────────────────────────────────
         layout.addWidget(QLabel("Color"))
         color_row = QHBoxLayout()
@@ -240,6 +274,11 @@ class EventDialog(QDialog):
                 self.end_time.setTime(QTime(h, m))
             self.notes_edit.setPlainText(event.get("notes") or "")
             self._pick_color(event.get("color", theme.BLUE))
+            reminder = event.get("reminder")
+            if reminder is not None:
+                idx = self._reminder_cb.findData(int(reminder))
+                if idx >= 0:
+                    self._reminder_cb.setCurrentIndex(idx)
 
     # ── internal helpers ──────────────────────────────────────────────────
 
@@ -295,4 +334,5 @@ class EventDialog(QDialog):
             "all_day": all_day,
             "notes": self.notes_edit.toPlainText().strip() or None,
             "color": self._selected_color,
+            "reminder": None if all_day else self._reminder_cb.currentData(),
         }

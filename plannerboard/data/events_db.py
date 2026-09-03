@@ -16,23 +16,25 @@ def init_db():
     with _conn() as c:
         c.execute("""
             CREATE TABLE IF NOT EXISTS events (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                title       TEXT    NOT NULL,
-                date        TEXT    NOT NULL,
-                end_date    TEXT,
-                time        TEXT,
-                end_time    TEXT,
-                all_day     INTEGER DEFAULT 1,
-                notes       TEXT,
-                color       TEXT    DEFAULT '#89b4fa',
-                created_at  TEXT    DEFAULT CURRENT_TIMESTAMP
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                title           TEXT    NOT NULL,
+                date            TEXT    NOT NULL,
+                end_date        TEXT,
+                time            TEXT,
+                end_time        TEXT,
+                all_day         INTEGER DEFAULT 1,
+                notes           TEXT,
+                color           TEXT    DEFAULT '#89b4fa',
+                reminder        INTEGER,
+                reminder_fired  TEXT,
+                created_at      TEXT    DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Migrate databases created before end_date was added
-        try:
-            c.execute("ALTER TABLE events ADD COLUMN end_date TEXT")
-        except Exception:
-            pass
+        for col in ("end_date TEXT", "reminder INTEGER", "reminder_fired TEXT"):
+            try:
+                c.execute(f"ALTER TABLE events ADD COLUMN {col}")
+            except Exception:
+                pass
 
 
 # An event overlaps a date range when it starts on or before the range end
@@ -84,14 +86,14 @@ def get_events_for_year(year):
 
 
 def add_event(title, date, end_date=None, time=None, end_time=None,
-              all_day=True, notes=None, color="#89b4fa"):
+              all_day=True, notes=None, color="#89b4fa", reminder=None):
     with _conn() as c:
         cur = c.execute(
             "INSERT INTO events "
-            "(title, date, end_date, time, end_time, all_day, notes, color) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "(title, date, end_date, time, end_time, all_day, notes, color, reminder) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
             (title, date, end_date, time, end_time,
-             1 if all_day else 0, notes, color)
+             1 if all_day else 0, notes, color, reminder)
         )
         return cur.lastrowid
 
@@ -103,10 +105,46 @@ def update_event(event_id, **kwargs):
     kwargs.pop("created_at", None)
     if "all_day" in kwargs:
         kwargs["all_day"] = 1 if kwargs["all_day"] else 0
+    # Reset fired flag so reminder fires again after any edit
+    kwargs["reminder_fired"] = None
     sets = ", ".join(f"{k}=?" for k in kwargs)
     with _conn() as c:
         c.execute(f"UPDATE events SET {sets} WHERE id=?",
                   [*kwargs.values(), event_id])
+
+
+def get_due_reminders():
+    """Return (event_dict, fired_key) for reminders that are now due but not yet fired."""
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    # Accept reminders up to 2 hours past their scheduled time (catches late app starts)
+    window_start = now - timedelta(hours=2)
+    today = now.date().isoformat()
+    tomorrow = (now.date() + timedelta(days=1)).isoformat()
+    with _conn() as c:
+        rows = c.execute("""
+            SELECT * FROM events
+            WHERE time IS NOT NULL AND all_day = 0
+              AND reminder IS NOT NULL
+              AND date BETWEEN ? AND ?
+        """, (today, tomorrow)).fetchall()
+    due = []
+    for row in [dict(r) for r in rows]:
+        try:
+            ev_dt = datetime.fromisoformat(f"{row['date']}T{row['time']}")
+        except ValueError:
+            continue
+        from datetime import timedelta as _td
+        reminder_dt = ev_dt - _td(minutes=int(row["reminder"]))
+        fired_key = f"{row['date']}T{row['time']}R{row['reminder']}"
+        if window_start <= reminder_dt <= now and row.get("reminder_fired") != fired_key:
+            due.append((row, fired_key))
+    return due
+
+
+def mark_reminder_fired(event_id, fired_key):
+    with _conn() as c:
+        c.execute("UPDATE events SET reminder_fired=? WHERE id=?", (fired_key, event_id))
 
 
 def delete_event(event_id):
