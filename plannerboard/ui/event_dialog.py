@@ -1,9 +1,9 @@
 from datetime import date
 
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QTextEdit, QPushButton, QCheckBox, QDateEdit, QTimeEdit,
-    QComboBox, QDialogButtonBox, QWidget, QFrame,
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
+    QTextEdit, QPushButton, QCheckBox, QRadioButton, QSpinBox,
+    QDateEdit, QTimeEdit, QComboBox, QDialogButtonBox, QWidget, QFrame,
 )
 from PyQt6.QtCore import QDate, QTime
 from PyQt6.QtGui import QFont
@@ -59,16 +59,17 @@ class EventDetailDialog(QDialog):
             time_str = f"{t} – {et}" if et else t
             layout.addWidget(self._sub(f"⏰ {time_str}"))
 
-        # Reminder
-        reminder = self._event.get("reminder")
-        if reminder is not None and not self._event.get("all_day"):
+        # Reminders (loaded from the reminders table)
+        if self._event.get("id"):
             _REMINDER_LABELS = {
                 0: "At event time", 5: "5 min before", 10: "10 min before",
                 15: "15 min before", 30: "30 min before", 60: "1 hour before",
                 120: "2 hours before", 1440: "1 day before",
             }
-            lbl = _REMINDER_LABELS.get(int(reminder), f"{reminder} min before")
-            layout.addWidget(self._sub(f"🔔 {lbl}"))
+            for r in self._db.get_reminders_for_event(self._event["id"]):
+                m = int(r["minutes"])
+                lbl = _REMINDER_LABELS.get(m, f"{m} min before")
+                layout.addWidget(self._sub(f"🔔 {lbl}"))
 
         # Notes
         notes = (self._event.get("notes") or "").strip()
@@ -169,6 +170,59 @@ class EventDialog(QDialog):
         self.multiday_cb.toggled.connect(self._sync_end_date)
         self.date_edit.dateChanged.connect(self._on_start_changed)
 
+        # ── Recurrence (new events only) ──────────────────────────────────
+        if not event:
+            self._repeat_cb = QCheckBox("Repeat this event")
+            layout.addWidget(self._repeat_cb)
+
+            self._recur_section = QWidget()
+            self._recur_section.setVisible(False)
+            rl = QVBoxLayout(self._recur_section)
+            rl.setContentsMargins(12, 2, 0, 2)
+            rl.setSpacing(6)
+
+            interval_row = QHBoxLayout()
+            interval_row.addWidget(QLabel("Interval:"))
+            self._interval_cb = QComboBox()
+            for lbl, code in [("Daily", "daily"), ("Weekly", "weekly"),
+                               ("Every 2 weeks", "biweekly"),
+                               ("Monthly", "monthly"), ("Yearly", "yearly")]:
+                self._interval_cb.addItem(lbl, code)
+            interval_row.addWidget(self._interval_cb)
+            interval_row.addStretch()
+            rl.addLayout(interval_row)
+
+            count_row = QHBoxLayout()
+            self._count_radio = QRadioButton("After")
+            self._count_radio.setChecked(True)
+            self._count_spin = QSpinBox()
+            self._count_spin.setRange(2, 500)
+            self._count_spin.setValue(4)
+            count_row.addWidget(self._count_radio)
+            count_row.addWidget(self._count_spin)
+            count_row.addWidget(QLabel("occurrences"))
+            count_row.addStretch()
+            rl.addLayout(count_row)
+
+            until_row = QHBoxLayout()
+            self._until_radio = QRadioButton("Until")
+            self._until_date = QDateEdit()
+            self._until_date.setCalendarPopup(True)
+            self._until_date.setDisplayFormat("dd.MM.yyyy")
+            self._until_date.setDate(self.date_edit.date().addMonths(3))
+            self._until_date.setEnabled(False)
+            until_row.addWidget(self._until_radio)
+            until_row.addWidget(self._until_date)
+            until_row.addStretch()
+            rl.addLayout(until_row)
+
+            self._count_radio.toggled.connect(self._count_spin.setEnabled)
+            self._count_radio.toggled.connect(lambda on: self._until_date.setEnabled(not on))
+            self._repeat_cb.toggled.connect(self._recur_section.setVisible)
+            layout.addWidget(self._recur_section)
+        else:
+            self._repeat_cb = None
+
         # ── All-day toggle ────────────────────────────────────────────────
         div = QFrame()
         div.setFrameShape(QFrame.Shape.HLine)
@@ -196,29 +250,38 @@ class EventDialog(QDialog):
         layout.addWidget(self.time_row)
         self.all_day_cb.toggled.connect(self.time_row.setHidden)
         self.time_row.setHidden(True)
+        self.start_time.timeChanged.connect(self._sync_end_time)
 
-        # ── Reminder ──────────────────────────────────────────────────────
-        self._reminder_row = QWidget()
-        rr = QHBoxLayout(self._reminder_row)
-        rr.setContentsMargins(0, 0, 0, 0)
-        rr.addWidget(QLabel("Reminder"))
-        self._reminder_cb = QComboBox()
-        for label, minutes in [
-            ("No reminder", None),
-            ("At event time", 0),
-            ("5 minutes before", 5),
-            ("10 minutes before", 10),
-            ("15 minutes before", 15),
-            ("30 minutes before", 30),
-            ("1 hour before", 60),
-            ("2 hours before", 120),
-            ("1 day before", 1440),
-        ]:
-            self._reminder_cb.addItem(label, minutes)
-        rr.addWidget(self._reminder_cb, 1)
-        layout.addWidget(self._reminder_row)
-        self.all_day_cb.toggled.connect(self._reminder_row.setHidden)
-        self._reminder_row.setHidden(True)
+        # ── Reminders (multiple checkboxes, hidden for all-day events) ────
+        self._reminder_section = QWidget()
+        rs = QVBoxLayout(self._reminder_section)
+        rs.setContentsMargins(0, 0, 0, 0)
+        rs.setSpacing(4)
+        rs.addWidget(QLabel("Reminders"))
+
+        grid = QWidget()
+        gl = QGridLayout(grid)
+        gl.setContentsMargins(0, 0, 0, 0)
+        gl.setSpacing(4)
+        self._reminder_checks: list[tuple[QCheckBox, int]] = []
+        _opts = [
+            (0,    "At event time"),
+            (5,    "5 minutes before"),
+            (10,   "10 minutes before"),
+            (15,   "15 minutes before"),
+            (30,   "30 minutes before"),
+            (60,   "1 hour before"),
+            (120,  "2 hours before"),
+            (1440, "1 day before"),
+        ]
+        for idx, (minutes, label) in enumerate(_opts):
+            cb = QCheckBox(label)
+            self._reminder_checks.append((cb, minutes))
+            gl.addWidget(cb, idx // 2, idx % 2)
+        rs.addWidget(grid)
+        layout.addWidget(self._reminder_section)
+        self.all_day_cb.toggled.connect(self._reminder_section.setHidden)
+        self._reminder_section.setHidden(True)
 
         # ── Color picker ──────────────────────────────────────────────────
         layout.addWidget(QLabel("Color"))
@@ -274,13 +337,17 @@ class EventDialog(QDialog):
                 self.end_time.setTime(QTime(h, m))
             self.notes_edit.setPlainText(event.get("notes") or "")
             self._pick_color(event.get("color", theme.BLUE))
-            reminder = event.get("reminder")
-            if reminder is not None:
-                idx = self._reminder_cb.findData(int(reminder))
-                if idx >= 0:
-                    self._reminder_cb.setCurrentIndex(idx)
+            if event.get("id"):
+                from plannerboard.data import events_db as _edb
+                existing = {r["minutes"] for r in _edb.get_reminders_for_event(event["id"])}
+                for cb, m in self._reminder_checks:
+                    cb.setChecked(m in existing)
 
     # ── internal helpers ──────────────────────────────────────────────────
+
+    def _sync_end_time(self, qt):
+        new_end = qt.addSecs(3600)
+        self.end_time.setTime(new_end)
 
     def _sync_end_date(self, checked):
         if checked:
@@ -325,6 +392,23 @@ class EventDialog(QDialog):
             qed = self.end_date_edit.date()
             end_date = date(qed.year(), qed.month(), qed.day()).isoformat()
 
+        reminders = (
+            [] if all_day
+            else [m for cb, m in self._reminder_checks if cb.isChecked()]
+        )
+
+        recurrence = None
+        if self._repeat_cb is not None and self._repeat_cb.isChecked():
+            recurrence = {
+                "interval": self._interval_cb.currentData(),
+                "mode": "count" if self._count_radio.isChecked() else "until",
+            }
+            if self._count_radio.isChecked():
+                recurrence["count"] = self._count_spin.value()
+            else:
+                qud = self._until_date.date()
+                recurrence["end_date"] = date(qud.year(), qud.month(), qud.day()).isoformat()
+
         return {
             "title": self.title_edit.text().strip(),
             "date": date(qsd.year(), qsd.month(), qsd.day()).isoformat(),
@@ -334,5 +418,6 @@ class EventDialog(QDialog):
             "all_day": all_day,
             "notes": self.notes_edit.toPlainText().strip() or None,
             "color": self._selected_color,
-            "reminder": None if all_day else self._reminder_cb.currentData(),
+            "reminders": reminders,
+            "recurrence": recurrence,
         }

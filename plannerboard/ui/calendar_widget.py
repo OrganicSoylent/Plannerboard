@@ -315,8 +315,7 @@ class CalendarWidget(QWidget):
     def _new_event_allday(self, d: date):
         dlg = EventDialog(self, initial_date=d)
         if dlg.exec():
-            data = dlg.get_data()
-            events_db.add_event(**data)
+            self._create_events(dlg.get_data())
             self._refresh()
 
     def _new_event_timed(self, d: date, hour: int):
@@ -326,8 +325,7 @@ class CalendarWidget(QWidget):
         dlg.start_time.setTime(QTime(hour, 0))
         dlg.end_time.setTime(QTime(min(hour + 1, 23), 0))
         if dlg.exec():
-            data = dlg.get_data()
-            events_db.add_event(**data)
+            self._create_events(dlg.get_data())
             self._refresh()
 
     def _edit_event(self, event: dict):
@@ -338,6 +336,65 @@ class CalendarWidget(QWidget):
             else:
                 events_db.update_event(event["id"], **dlg.get_data())
             self._refresh()
+
+    def _create_events(self, data: dict):
+        """Create one or more event rows; expands recurrence when set."""
+        import uuid
+        recurrence = data.pop("recurrence", None)
+        if not recurrence:
+            events_db.add_event(**data)
+            return
+        series_id = str(uuid.uuid4())
+        for iso_date in self._expand_recurrence(data["date"], recurrence):
+            events_db.add_event(
+                title=data["title"],
+                date=iso_date,
+                end_date=data.get("end_date"),
+                time=data.get("time"),
+                end_time=data.get("end_time"),
+                all_day=data.get("all_day", True),
+                notes=data.get("notes"),
+                color=data.get("color", "#89b4fa"),
+                reminders=data.get("reminders"),
+                series_id=series_id,
+            )
+
+    @staticmethod
+    def _expand_recurrence(start_iso: str, recurrence: dict) -> list:
+        """Return a list of ISO date strings for each occurrence."""
+        import calendar as _cal
+
+        def _add_months(d, n):
+            month = d.month + n
+            year = d.year + (month - 1) // 12
+            month = (month - 1) % 12 + 1
+            day = min(d.day, _cal.monthrange(year, month)[1])
+            return d.replace(year=year, month=month, day=day)
+
+        _DELTAS = {"daily": timedelta(1), "weekly": timedelta(7), "biweekly": timedelta(14)}
+        interval = recurrence["interval"]
+        mode = recurrence["mode"]
+        current = date.fromisoformat(start_iso)
+        dates = []
+
+        def _step(d):
+            if interval in _DELTAS:
+                return d + _DELTAS[interval]
+            if interval == "monthly":
+                return _add_months(d, 1)
+            return _add_months(d, 12)  # yearly
+
+        if mode == "count":
+            for _ in range(recurrence.get("count", 4)):
+                dates.append(current.isoformat())
+                current = _step(current)
+        else:
+            end = date.fromisoformat(recurrence["end_date"])
+            while current <= end:
+                dates.append(current.isoformat())
+                current = _step(current)
+
+        return dates
 
     def reload(self):
         """Call after settings change (country, subdivision)."""

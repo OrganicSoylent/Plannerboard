@@ -4,7 +4,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QCheckBox, QPushButton, QDialogButtonBox,
-    QGroupBox, QFormLayout, QDoubleSpinBox,
+    QGroupBox, QFormLayout, QDoubleSpinBox, QFileDialog,
 )
 from PyQt6.QtCore import Qt
 
@@ -130,6 +130,52 @@ class SettingsDialog(QDialog):
         uf.addRow("Wind speed:", self._wind_cb)
         root.addWidget(unit_box)
 
+        # ── Reminders ─────────────────────────────────────────────────────
+        from plannerboard.services.reminder_service import get_available_sounds
+        rem_box = QGroupBox("Reminders")
+        rf = QFormLayout(rem_box)
+
+        sound_row = QHBoxLayout()
+        self._sound_cb = QComboBox()
+        self._sound_cb.setMinimumWidth(160)
+        self._sound_paths: list[str | None] = []
+
+        available = get_available_sounds()
+        if available:
+            for label, path in available:
+                self._sound_cb.addItem(label)
+                self._sound_paths.append(path)
+        else:
+            self._sound_cb.addItem("(no system sounds found)")
+            self._sound_paths.append(None)
+
+        # If a custom sound is already configured, add it to the list
+        saved_sound = self._config.get("reminder_sound")
+        if saved_sound:
+            known_paths = [p for p in self._sound_paths if p]
+            if saved_sound in known_paths:
+                self._sound_cb.setCurrentIndex(known_paths.index(saved_sound))
+            else:
+                label = Path(saved_sound).name
+                self._sound_cb.addItem(f"Custom: {label}")
+                self._sound_paths.append(saved_sound)
+                self._sound_cb.setCurrentIndex(self._sound_cb.count() - 1)
+
+        sound_row.addWidget(self._sound_cb, 1)
+
+        browse_btn = QPushButton("Browse…")
+        browse_btn.setFixedWidth(80)
+        browse_btn.clicked.connect(self._browse_sound)
+        sound_row.addWidget(browse_btn)
+
+        test_btn = QPushButton("▶ Test")
+        test_btn.setFixedWidth(70)
+        test_btn.clicked.connect(self._test_sound)
+        sound_row.addWidget(test_btn)
+
+        rf.addRow("Sound:", sound_row)
+        root.addWidget(rem_box)
+
         # ── Autostart (Linux only) ────────────────────────────────────────
         if platform.system() == "Linux":
             auto_box = QGroupBox("Autostart")
@@ -148,6 +194,30 @@ class SettingsDialog(QDialog):
         btns.accepted.connect(self._save)
         btns.rejected.connect(self.reject)
         root.addWidget(btns)
+
+    def _browse_sound(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose Reminder Sound", str(Path.home()),
+            "Audio files (*.oga *.ogg *.wav *.mp3 *.flac);;All files (*)"
+        )
+        if not path:
+            return
+        label = f"Custom: {Path(path).name}"
+        # Replace any existing Custom entry
+        for i in range(self._sound_cb.count()):
+            if self._sound_cb.itemText(i).startswith("Custom:"):
+                self._sound_cb.removeItem(i)
+                self._sound_paths.pop(i)
+                break
+        self._sound_cb.addItem(label)
+        self._sound_paths.append(path)
+        self._sound_cb.setCurrentIndex(self._sound_cb.count() - 1)
+
+    def _test_sound(self):
+        from plannerboard.services.reminder_service import play_reminder_sound
+        idx = self._sound_cb.currentIndex()
+        path = self._sound_paths[idx] if 0 <= idx < len(self._sound_paths) else None
+        play_reminder_sound(path)
 
     def _reload_subdivisions(self, country):
         self._subdiv_cb.clear()
@@ -179,6 +249,10 @@ class SettingsDialog(QDialog):
         self._config.set("subdivision", self._subdiv_cb.currentData() or "")
         self._config.set("temperature_unit", self._temp_cb.currentData())
         self._config.set("wind_speed_unit", self._wind_cb.currentData())
+
+        idx = self._sound_cb.currentIndex()
+        sound_path = self._sound_paths[idx] if 0 <= idx < len(self._sound_paths) else None
+        self._config.set("reminder_sound", sound_path)
 
         if self._autostart_cb is not None:
             if self._autostart_cb.isChecked():

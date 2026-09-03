@@ -147,9 +147,10 @@ class MainWindow(QMainWindow):
     # ── reminders ─────────────────────────────────────────────────────────
 
     def _check_reminders(self):
-        for event, fired_key in events_db.get_due_reminders():
-            events_db.mark_reminder_fired(event["id"], fired_key)
-            reminder_service.fire_reminder(event)
+        sound_path = self._config.get("reminder_sound")
+        for reminder_id, event, fired_key in events_db.get_due_reminders():
+            events_db.mark_reminder_fired(reminder_id, fired_key)
+            reminder_service.fire_reminder(event, sound_path=sound_path)
 
     # ── auto-location ─────────────────────────────────────────────────────
 
